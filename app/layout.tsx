@@ -3,9 +3,8 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'FinBot Finance | Tu dinero, más claro',
-  description: 'Dashboard inteligente para organizar tus finanzas personales con FinBot Finance.',
-  generator: 'v0.app',
+  title: 'FinBot | Tus finanzas',
+  description: 'Consulta los movimientos y presupuestos registrados por tu bot de WhatsApp.',
   icons: {
     icon: [
       {
@@ -39,7 +38,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="es">
       <body className="antialiased">
         {children}
         {process.env.NODE_ENV === 'production' && <Analytics />}
