@@ -49,11 +49,11 @@ export function DashboardShell({
   )
 }
 
-export function EstadoConexion({ motivo }: { motivo: 'configuracion' | 'conexion' }) {
+export function EstadoConexion({ motivo, seccion }: { motivo: 'configuracion' | 'conexion'; seccion?: string }) {
   const configurando = motivo === 'configuracion'
   return (
     <section className="panel" role="status" aria-live="polite">
-      <h2>{configurando ? 'Falta conectar el bot' : 'No se pudieron cargar tus datos'}</h2>
+      <h2>{seccion ? `${seccion}: ` : ''}{configurando ? 'Falta conectar el bot' : 'No se pudieron cargar los datos'}</h2>
       <p className="subheading">
         {configurando
           ? 'Configura BOT_API_URL y BOT_API_TOKEN en el entorno del servidor web.'
@@ -65,6 +65,10 @@ export function EstadoConexion({ motivo }: { motivo: 'configuracion' | 'conexion
 
 export function FormatoMonto({ valor }: { valor: number }) {
   return <>{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(valor)}</>
+}
+
+export function ImporteMovimiento({ tipo, monto }: { tipo: 'gasto' | 'ingreso'; monto: number }) {
+  return <>{tipo === 'gasto' ? '−' : '+'}<FormatoMonto valor={monto} /></>
 }
 
 export function FormatoFecha({ valor }: { valor: string }) {

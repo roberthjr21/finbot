@@ -1,3 +1,7 @@
+import 'server-only'
+import { headers } from 'next/headers'
+import { credencialesDashboardValidas } from './dashboard-auth'
+
 export type Movimiento = {
   id: number
   tipo: 'gasto' | 'ingreso'
@@ -6,7 +10,6 @@ export type Movimiento = {
   descripcion: string
   fecha: string
 }
-
 export type Resumen = {
   mes: string
   desde: string
@@ -44,6 +47,11 @@ function configuracion() {
 }
 
 async function consultar<T>(ruta: string, validar: (valor: unknown) => valor is T): Promise<Resultado<T>> {
+  const cabecerasSolicitud = await headers()
+  if (!credencialesDashboardValidas(cabecerasSolicitud.get('authorization'))) {
+    return { ok: false, motivo: 'conexion' }
+  }
+
   const config = configuracion()
   if (!config) return { ok: false, motivo: 'configuracion' }
 
@@ -77,11 +85,12 @@ export async function obtenerResumen(): Promise<Resultado<Resumen>> {
   return consultar(`/api/resumen?mes=${mesActual()}`, (dato): dato is Resumen => {
     if (!dato || typeof dato !== 'object') return false
     const valor = dato as Record<string, unknown>
-    return typeof valor.mes === 'string' && typeof valor.ingresos === 'number' &&
-      typeof valor.gastos === 'number' && typeof valor.balance === 'number' &&
+    return typeof valor.mes === 'string' && typeof valor.ingresos === 'number' && Number.isSafeInteger(valor.ingresos) && valor.ingresos >= 0 &&
+      typeof valor.gastos === 'number' && Number.isSafeInteger(valor.gastos) && valor.gastos >= 0 &&
+      typeof valor.balance === 'number' && Number.isSafeInteger(valor.balance) &&
       Array.isArray(valor.porCategoria) && valor.porCategoria.every((fila) =>
         !!fila && typeof fila === 'object' && typeof (fila as Record<string, unknown>).categoria === 'string' &&
-        typeof (fila as Record<string, unknown>).total === 'number')
+        Number.isSafeInteger((fila as Record<string, unknown>).total) && (fila as Record<string, number>).total >= 0)
   })
 }
 
@@ -102,7 +111,8 @@ export async function obtenerPresupuestos(): Promise<Resultado<Presupuesto[]>> {
     Array.isArray(dato) && dato.every((fila) => {
       if (!fila || typeof fila !== 'object') return false
       const valor = fila as Record<string, unknown>
-      return typeof valor.categoria === 'string' && typeof valor.limite === 'number' &&
-        typeof valor.gastado === 'number' && typeof valor.porcentaje === 'number'
+      return typeof valor.categoria === 'string' && typeof valor.limite === 'number' && Number.isSafeInteger(valor.limite) && valor.limite > 0 &&
+        typeof valor.gastado === 'number' && Number.isSafeInteger(valor.gastado) && valor.gastado >= 0 &&
+        typeof valor.porcentaje === 'number' && Number.isSafeInteger(valor.porcentaje)
     }))
 }
