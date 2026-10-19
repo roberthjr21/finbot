@@ -55,10 +55,13 @@ button { font: inherit; }
 .data-list strong { text-align: right; }
 .link-button { text-decoration: none; }
 .page-wrap .panel + .panel { margin-top: 14px; }
+.api-status { margin: 0; padding: 10px 37px 16px; color: var(--muted); font-size: 11px; text-align: right; }
+.link-button:focus-visible, a:focus-visible, button:focus-visible { outline: 3px solid #287eeb; outline-offset: 3px; }
 @media (max-width: 620px) {
   .table-head, .transaction-row { grid-template-columns: minmax(0, 1.4fr) minmax(70px, .8fr) minmax(90px, 1fr); gap: 8px; }
   .table-head span:nth-child(2), .transaction-row > .category-pill { display: none; }
   .page-wrap { padding: 22px 14px; }
   .stat-card { padding: 14px; }
   .stat-card strong { font-size: 17px; }
+  .api-status { padding: 10px 14px 16px; text-align: left; }
 }

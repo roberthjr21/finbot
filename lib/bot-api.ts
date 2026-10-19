@@ -26,6 +26,14 @@ export type Presupuesto = {
   gastado: number
   porcentaje: number
 }
+export type MovimientoFiltros = {
+  desde?: string
+  hasta?: string
+  tipo?: 'gasto' | 'ingreso'
+  categoria?: string
+  limite?: number
+  offset?: number
+}
 
 export type Resultado<T> =
   | { ok: true; datos: T }
@@ -81,8 +89,39 @@ function mesActual() {
   return `${año}-${mes}`
 }
 
-export async function obtenerResumen(): Promise<Resultado<Resumen>> {
-  return consultar(`/api/resumen?mes=${mesActual()}`, (dato): dato is Resumen => {
+function fechaValida(fecha: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return false
+  const valor = new Date(`${fecha}T12:00:00Z`)
+  return !Number.isNaN(valor.getTime()) && valor.toISOString().slice(0, 10) === fecha
+}
+
+function mesValido(mes: string) {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(mes)
+}
+
+export function formatearMonto(valor: number) {
+  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(valor)
+}
+
+export function formatearFecha(valor: string) {
+  const fecha = new Date(`${valor}T12:00:00Z`)
+  if (Number.isNaN(fecha.getTime())) return valor
+  return new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeZone: 'America/Bogota' }).format(fecha)
+}
+
+export async function obtenerSalud(): Promise<Resultado<{ ok: true }>> {
+  return consultar('/api/salud', (dato): dato is { ok: true } =>
+    !!dato && typeof dato === 'object' && (dato as Record<string, unknown>).ok === true)
+}
+
+export async function obtenerCategorias(): Promise<Resultado<string[]>> {
+  return consultar('/api/categorias', (dato): dato is string[] =>
+    Array.isArray(dato) && dato.every((categoria) => typeof categoria === 'string'))
+}
+
+export async function obtenerResumen(mes = mesActual()): Promise<Resultado<Resumen>> {
+  if (!mesValido(mes)) return { ok: false, motivo: 'conexion' }
+  return consultar(`/api/resumen?mes=${encodeURIComponent(mes)}`, (dato): dato is Resumen => {
     if (!dato || typeof dato !== 'object') return false
     const valor = dato as Record<string, unknown>
     return typeof valor.mes === 'string' && typeof valor.ingresos === 'number' && Number.isSafeInteger(valor.ingresos) && valor.ingresos >= 0 &&
@@ -94,9 +133,21 @@ export async function obtenerResumen(): Promise<Resultado<Resumen>> {
   })
 }
 
-export async function obtenerMovimientos(offset = 0): Promise<Resultado<Movimiento[]>> {
-  const seguro = Number.isSafeInteger(offset) && offset >= 0 ? Math.min(offset, 1_000_000) : 0
-  return consultar(`/api/movimientos?limite=100&offset=${seguro}`, (dato): dato is Movimiento[] =>
+export async function obtenerMovimientos(filtros: MovimientoFiltros = {}): Promise<Resultado<Movimiento[]>> {
+  const { desde, hasta, tipo, categoria, limite = 100, offset = 0 } = filtros
+  if ((desde !== undefined && !fechaValida(desde)) || (hasta !== undefined && !fechaValida(hasta)) ||
+      (desde && hasta && desde > hasta) || (tipo !== undefined && tipo !== 'gasto' && tipo !== 'ingreso') ||
+      (categoria !== undefined && (categoria.length === 0 || categoria.length > 100)) ||
+      !Number.isSafeInteger(limite) || limite < 1 || limite > 500 ||
+      !Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) {
+    return { ok: false, motivo: 'conexion' }
+  }
+  const parametros = new URLSearchParams({ limite: String(limite), offset: String(offset) })
+  if (desde) parametros.set('desde', desde)
+  if (hasta) parametros.set('hasta', hasta)
+  if (tipo) parametros.set('tipo', tipo)
+  if (categoria) parametros.set('categoria', categoria)
+  return consultar(`/api/movimientos?${parametros}`, (dato): dato is Movimiento[] =>
     Array.isArray(dato) && dato.every((fila) => {
       if (!fila || typeof fila !== 'object') return false
       const valor = fila as Record<string, unknown>
@@ -106,8 +157,9 @@ export async function obtenerMovimientos(offset = 0): Promise<Resultado<Movimien
     }))
 }
 
-export async function obtenerPresupuestos(): Promise<Resultado<Presupuesto[]>> {
-  return consultar(`/api/presupuestos?mes=${mesActual()}`, (dato): dato is Presupuesto[] =>
+export async function obtenerPresupuestos(mes = mesActual()): Promise<Resultado<Presupuesto[]>> {
+  if (!mesValido(mes)) return { ok: false, motivo: 'conexion' }
+  return consultar(`/api/presupuestos?mes=${encodeURIComponent(mes)}`, (dato): dato is Presupuesto[] =>
     Array.isArray(dato) && dato.every((fila) => {
       if (!fila || typeof fila !== 'object') return false
       const valor = fila as Record<string, unknown>

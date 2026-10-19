@@ -1,10 +1,11 @@
 import { DashboardShell, EstadoConexion, FormatoMonto } from '@/components/dashboard-shell'
-import { obtenerPresupuestos } from '@/lib/bot-api'
+import { obtenerPresupuestos, obtenerSalud } from '@/lib/bot-api'
 
 export default async function PresupuestosPage() {
-  const resultado = await obtenerPresupuestos()
+  const [resultado, salud] = await Promise.all([obtenerPresupuestos(), obtenerSalud()])
+  const consultado = new Date().toISOString()
   return (
-    <DashboardShell pagina="Presupuestos">
+    <DashboardShell pagina="Presupuestos" salud={salud} consultado={consultado}>
       <div className="page-heading"><div><p className="eyebrow">CONTROL MENSUAL</p><h1>Presupuestos</h1><p className="subheading">Límites y gastos registrados en el bot.</p></div></div>
       {!resultado.ok && <EstadoConexion motivo={resultado.motivo} />}
       {resultado.ok && (resultado.datos.length === 0

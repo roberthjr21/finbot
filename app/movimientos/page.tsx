@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { DashboardShell, EstadoConexion, FormatoFecha, ImporteMovimiento } from '@/components/dashboard-shell'
-import { obtenerMovimientos } from '@/lib/bot-api'
+import { obtenerMovimientos, obtenerSalud } from '@/lib/bot-api'
 
 const POR_PAGINA = 100
 const MAX_OFFSET = 1_000_000
@@ -8,11 +8,12 @@ const MAX_OFFSET = 1_000_000
 export default async function MovimientosPage({ searchParams }: { searchParams: Promise<{ offset?: string }> }) {
   const parametros = await searchParams
   const solicitado = Number(parametros.offset ?? 0)
-  const offset = Number.isSafeInteger(solicitado) && solicitado > 0 ? Math.min(solicitado, MAX_OFFSET) : 0
-  const resultado = await obtenerMovimientos(offset)
+  const offset = Number.isSafeInteger(solicitado) && solicitado >= 0 && solicitado <= MAX_OFFSET ? solicitado : 0
+  const [resultado, salud] = await Promise.all([obtenerMovimientos({ offset, limite: POR_PAGINA }), obtenerSalud()])
+  const consultado = new Date().toISOString()
 
   return (
-    <DashboardShell pagina="Movimientos">
+    <DashboardShell pagina="Movimientos" salud={salud} consultado={consultado}>
       <div className="page-heading"><div><p className="eyebrow">HISTORIAL</p><h1>Movimientos</h1><p className="subheading">Registros guardados por el bot.</p></div></div>
       {!resultado.ok && <EstadoConexion motivo={resultado.motivo} />}
       {resultado.ok && (resultado.datos.length === 0

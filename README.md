@@ -1,24 +1,42 @@
 # FinBot Finance (web)
 
-El panel consulta los datos guardados por el bot de WhatsApp. El flujo es:
+Panel de solo lectura para consultar la API existente del bot de WhatsApp. La web solo muestra resumen mensual, movimientos, categorías y presupuestos; no registra ni borra datos.
 
-`WhatsApp → bot → SQLite → API de solo lectura del bot → servidor Next.js → navegador`
+## Variables de entorno
 
-La web no escribe en la base de datos ni crea claves API en el navegador. El token se usa únicamente en el servidor Next.js.
+Configura en el entorno privado del servidor Next.js:
 
-## Configuración
+- `BOT_API_URL`: URL base alcanzable del API del bot.
+- `BOT_API_TOKEN`: token que el servidor envía como `Authorization: Bearer …`.
+- `DASHBOARD_USER` y `DASHBOARD_PASSWORD`: credenciales Basic Auth que protegen el panel.
 
-1. Copia `.env.example` a `.env.local` para desarrollo.
-2. Define `BOT_API_URL`, `BOT_API_TOKEN`, `DASHBOARD_USER` y `DASHBOARD_PASSWORD` en el entorno privado del servidor web.
-3. Instala dependencias con `pnpm install --frozen-lockfile` y ejecuta `pnpm dev`.
+Copia `.env.example` a `.env.local` para desarrollo y completa los valores localmente. No uses prefijos `NEXT_PUBLIC_` para secretos ni incluyas valores reales en el repositorio.
 
-`BOT_API_URL` debe apuntar a la API del bot. En la misma computadora puede ser `http://127.0.0.1:3001`. Para una web alojada fuera de esa computadora se requiere una URL HTTPS privada que alcance el bot, o alojar bot y API en un servidor siempre encendido. No uses `NEXT_PUBLIC_` en estas variables ni compartas el token en el navegador o en el chat.
+## Desarrollo y compilación
 
-El panel solicita usuario y contraseña mediante Basic Auth. Define ambas variables o el servidor responde con error y no muestra información. Usa una contraseña larga y activa HTTPS en cualquier despliegue público: Basic Auth no cifra las credenciales por sí solo. El usuario no puede contener `:`. Las credenciales se verifican también antes de cada consulta al API del bot.
+Con pnpm 12.3.4:
 
-El API existente entrega el resumen mensual, movimientos paginados y presupuestos. La interfaz muestra esas tres funciones y los estados de configuración, conexión y datos vacíos. La conexión es de solo lectura y sirve al usuario predeterminado configurado en el bot.
+```sh
+pnpm install --frozen-lockfile
+pnpm dev
+```
 
-## Comprobaciones
+Verificaciones locales:
 
-- `pnpm typecheck`
-- `pnpm build`
+```sh
+pnpm typecheck
+pnpm lint
+pnpm build
+```
+
+## Conexión segura con el bot
+
+El navegador solo recibe el HTML renderizado por Next.js. El servidor Next.js hace las consultas HTTPS al API con el token; `BOT_API_URL` y `BOT_API_TOKEN` son variables privadas y nunca deben publicarse en el cliente.
+
+La arquitectura de red para despliegue aún debe decidirse. En Vercel configura una URL HTTPS privada que pueda alcanzar el servidor del bot mediante un túnel privado, o ejecuta el bot en un servidor siempre encendido y accesible por HTTPS. Una dirección loopback como `127.0.0.1` solo apunta al mismo equipo del proceso web y no sirve para llegar desde Vercel al equipo donde se ejecuta el bot.
+
+El panel está protegido con Basic Auth mediante `DASHBOARD_USER` y `DASHBOARD_PASSWORD`; configura ambos en el entorno del servidor y usa HTTPS en cualquier despliegue. El usuario no puede contener `:`. Cada consulta al bot verifica también la autenticación del panel.
+
+## Preview antes de producción
+
+Despliega primero una preview con sus propias variables privadas. Configura en esa preview una URL de API de pruebas accesible por HTTPS y un token válido del entorno de pruebas; valida el estado de salud, resumen, movimientos, categorías, presupuestos, paginación y estados de error/vacío. No pongas datos financieros en URLs de preview. Promueve a producción solo después de confirmar la conectividad desde el entorno desplegado. El repositorio mantiene `@vercel/analytics`; registra métricas de visita y no recibe datos financieros como parámetros de URL.

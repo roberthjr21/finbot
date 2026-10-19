@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
 import { BarChart3, LayoutDashboard, PiggyBank, Sparkles } from 'lucide-react'
+import { formatearFecha, formatearMonto, type Resultado } from '@/lib/bot-api'
 
 const enlaces = [
   { href: '/', etiqueta: 'Resumen', Icono: LayoutDashboard },
@@ -11,7 +12,9 @@ const enlaces = [
 export function DashboardShell({
   children,
   pagina,
-}: Readonly<{ children: ReactNode; pagina: string }>) {
+  salud,
+  consultado,
+}: Readonly<{ children: ReactNode; pagina: string; salud?: Resultado<{ ok: true }>; consultado?: string }>) {
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -35,7 +38,7 @@ export function DashboardShell({
         <div className="sidebar-bottom">
           <div className="whatsapp-card">
             <div className="whatsapp-icon"><Sparkles size={16} /></div>
-            <div><strong>Origen de datos</strong><span>WhatsApp · SQLite</span></div>
+            <div><strong>Canal de registro</strong><span>WhatsApp</span></div>
           </div>
         </div>
       </aside>
@@ -44,6 +47,7 @@ export function DashboardShell({
           <div className="breadcrumb"><span>FinBot</span><span>/</span><strong>{pagina}</strong></div>
         </header>
         <div className="page-wrap">{children}</div>
+        {salud && <p className="api-status" role="status">API: {salud.ok ? 'disponible' : 'sin respuesta'}{consultado ? ` · Consulta: ${new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Bogota' }).format(new Date(consultado))}` : ''}</p>}
       </main>
     </div>
   )
@@ -64,7 +68,7 @@ export function EstadoConexion({ motivo, seccion }: { motivo: 'configuracion' | 
 }
 
 export function FormatoMonto({ valor }: { valor: number }) {
-  return <>{new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(valor)}</>
+  return <>{formatearMonto(valor)}</>
 }
 
 export function ImporteMovimiento({ tipo, monto }: { tipo: 'gasto' | 'ingreso'; monto: number }) {
@@ -72,7 +76,5 @@ export function ImporteMovimiento({ tipo, monto }: { tipo: 'gasto' | 'ingreso'; 
 }
 
 export function FormatoFecha({ valor }: { valor: string }) {
-  const fecha = new Date(`${valor}T12:00:00Z`)
-  if (Number.isNaN(fecha.getTime())) return <>{valor}</>
-  return <>{new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeZone: 'America/Bogota' }).format(fecha)}</>
+  return <>{formatearFecha(valor)}</>
 }

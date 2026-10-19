@@ -1,16 +1,19 @@
 import Link from 'next/link'
 import { ArrowDownLeft, ArrowUpRight } from 'lucide-react'
 import { DashboardShell, EstadoConexion, FormatoFecha, FormatoMonto, ImporteMovimiento } from '@/components/dashboard-shell'
-import { obtenerMovimientos, obtenerPresupuestos, obtenerResumen } from '@/lib/bot-api'
+import { obtenerCategorias, obtenerMovimientos, obtenerPresupuestos, obtenerResumen, obtenerSalud } from '@/lib/bot-api'
 
 export default async function Page() {
-  const [resumen, movimientos, presupuestos] = await Promise.all([
+  const [resumen, movimientos, presupuestos, categorias, salud] = await Promise.all([
     obtenerResumen(),
     obtenerMovimientos(),
     obtenerPresupuestos(),
+    obtenerCategorias(),
+    obtenerSalud(),
   ])
+  const consultado = new Date().toISOString()
   return (
-    <DashboardShell pagina="Resumen">
+    <DashboardShell pagina="Resumen" salud={salud} consultado={consultado}>
       <div className="page-heading">
         <div><p className="eyebrow">DATOS DEL BOT</p><h1>Resumen financiero</h1><p className="subheading">Movimientos que registraste por WhatsApp.</p></div>
       </div>
@@ -24,7 +27,7 @@ export default async function Page() {
             <article className="stat-card"><div className="stat-top"><span>Balance del mes</span></div><strong><FormatoMonto valor={resumen.datos.balance} /></strong></article>
           </section>
       </>}
-      {(resumen.ok || presupuestos.ok) && <section className="charts-grid">
+      {(resumen.ok || presupuestos.ok || categorias.ok) && <section className="charts-grid">
         {resumen.ok && <article className="panel">
           <div className="panel-heading"><div><h2>Gastos por categoría</h2><p>{resumen.datos.mes}</p></div></div>
           {resumen.datos.porCategoria.length === 0
@@ -36,6 +39,10 @@ export default async function Page() {
           {presupuestos.datos.length === 0
             ? <p className="subheading">Todavía no has definido presupuestos.</p>
             : <ul className="data-list">{presupuestos.datos.slice(0, 5).map((fila) => <li key={fila.categoria}><span>{fila.categoria}</span><strong><FormatoMonto valor={fila.gastado} /> / <FormatoMonto valor={fila.limite} /></strong></li>)}</ul>}
+        </article>}
+        {categorias.ok && <article className="panel">
+          <div className="panel-heading"><div><h2>Categorías</h2><p>Disponibles en el bot</p></div></div>
+          {categorias.datos.length === 0 ? <p className="subheading">La API no devolvió categorías.</p> : <ul className="data-list">{categorias.datos.map((categoria) => <li key={categoria}><span>{categoria}</span></li>)}</ul>}
         </article>}
       </section>}
       {movimientos.ok && <>
