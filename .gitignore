@@ -1,0 +1,17 @@
+# Secretos y entorno (cada carpeta también tiene el suyo)
+.env
+.env.*
+!.env.example
+
+# Sesión de WhatsApp y base de datos del bot
+bot/auth/
+*.db
+*.db-wal
+*.db-shm
+bot/respaldos/
+
+# Dependencias y compilación
+node_modules/
+web/.next/
+
+.DS_Store
