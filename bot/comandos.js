@@ -9,6 +9,7 @@ export const AYUDA = [
   '• "me pagaron 1,5 millones"',
   '• "cuánto gasté esta semana"',
   '• "ponme un presupuesto de 300 mil en comida"',
+  '• "cómo van mis gastos" o "en qué estoy fallando"',
   '',
   'O usa comandos (funcionan aunque la IA falle):',
   '/gasto 20000 comida almuerzo',
@@ -18,6 +19,7 @@ export const AYUDA = [
   '/deshacer',
   '/presupuesto comida 300000',
   '/presupuestos',
+  '/analisis',
 ].join('\n');
 
 const PERIODOS = {
@@ -89,6 +91,10 @@ export function interpretarComando(texto) {
 
     case 'presupuestos':
       return { acciones: [{ nombre: 'ver_presupuestos', datos: {} }] };
+
+    case 'analisis':
+    case 'analizar':
+      return { acciones: [{ nombre: 'analizar_gastos', datos: {} }] };
 
     default:
       return null;

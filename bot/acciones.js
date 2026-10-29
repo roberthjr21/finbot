@@ -132,6 +132,11 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       return lineas.join('\n');
     }
 
+    // El análisis llama a la IA (asíncrono), así que no puede correr dentro de la
+    // transacción: bot.js lo atiende justo después, con responderAnalisis().
+    case 'analizar_gastos':
+      return null;
+
     default:
       return '⚠️ No supe qué hacer con eso.';
   }

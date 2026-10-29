@@ -57,6 +57,12 @@ const HERRAMIENTAS = [
     nombre: 'ver_presupuestos',
     descripcion: 'Muestra los presupuestos mensuales y cuánto se ha gastado de cada uno.',
   },
+  {
+    nombre: 'analizar_gastos',
+    descripcion:
+      'Analiza cómo van los gastos de la persona este mes frente al mes pasado y en qué categorías se está pasando. ' +
+      'Úsala cuando pregunte cómo van sus gastos en general, en qué está fallando, si gasta mucho o pida consejos sobre SUS propios gastos.',
+  },
 ];
  
 const esquema = (h) => ({
@@ -108,6 +114,7 @@ Reglas:
 - Si dice "ayer", "el lunes", etc., calcula la fecha a partir de hoy. Si no dice fecha, no la envíes.
 - Si falta el monto o no se entiende qué pasó, NO registres nada: haz una pregunta corta.
 - Para saber cuánto gastó o ganó usa consultar_resumen; para ver lo último, ultimos_movimientos; para iniciar un borrado pide confirmación con deshacer_ultimo; para límites mensuales, fijar_presupuesto o ver_presupuestos.
+- Si pregunta cómo van sus gastos, en qué está fallando, si gasta mucho o quiere consejos sobre sus propios gastos, usa analizar_gastos: no respondas con consejos genéricos sin mirar sus datos.
 - Para otras preguntas de dinero (ahorro, deudas, cómo organizarse), responde en texto, breve y práctico. Das información general, no eres asesor financiero: no recomiendes inversiones concretas ni prometas resultados.
 - Si la persona pregunta algo que no tiene que ver con sus finanzas personales (programación, tareas, cultura general, etc.), no lo respondas: di en una frase corta y amable que solo puedes ayudar con sus gastos, ingresos, presupuestos y finanzas, y da un ejemplo de lo que sí puedes hacer.
 - Responde siempre en español, corto y amable. No inventes datos que la persona no haya dicho.`;
@@ -198,4 +205,94 @@ export async function interpretar(texto, hoy) {
     default:
       throw new Error('No hay ninguna clave de IA configurada (GEMINI_API_KEY o ANTHROPIC_API_KEY).');
   }
+}
+
+// ---------------------------------------------------
+// Análisis de gastos
+// La IA NO calcula nada: recibe cifras ya calculadas por el código
+// (sin descripciones escritas por la persona) y solo las interpreta.
+// ---------------------------------------------------
+
+function instruccionesAnalisis(hoy) {
+  return `Eres un asistente de finanzas personales que habla por WhatsApp con una sola persona, en Colombia. La moneda es el peso colombiano (COP). Hoy es ${hoy}.
+
+Recibirás un JSON con los datos reales de la persona: este mes hasta hoy y el mismo tramo del mes pasado.
+
+Reglas:
+- Usa SOLO los números del JSON. No inventes cifras ni hagas otros cálculos: los porcentajes ya vienen calculados. Si variacion_pct es null, esa categoría no tuvo gasto el mes pasado en ese tramo.
+- Máximo 120 palabras, en español, tono cercano y sin regaños.
+- Estructura: 1) una frase sobre cómo va el mes; 2) hasta 3 puntos concretos sobre en qué se está pasando o qué subió más, con su valor, y menciona los presupuestos cerca del límite o pasados (compáralos con avance_del_mes_pct); 3) una sugerencia pequeña y práctica.
+- Si algo va bien (gastos a la baja, presupuestos bajo control), dilo.
+- Formato de WhatsApp: puedes usar *negritas* y viñetas con •, sin títulos largos ni tablas. Escribe los montos como $20.000.
+- Das información general, no eres asesor financiero: no recomiendes inversiones concretas ni prometas resultados.
+- Si hay pocos datos, dilo con honestidad en vez de sacar conclusiones fuertes.`;
+}
+
+async function analisisConGemini(datos, hoy) {
+  const modelo = process.env.MODELO_GEMINI ?? process.env.MODELO_IA ?? 'gemini-2.5-flash';
+  const url =
+    process.env.GEMINI_URL ??
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(modelo)}:generateContent`;
+
+  const res = await solicitarConReintento(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
+    body: JSON.stringify({
+      systemInstruction: { parts: [{ text: instruccionesAnalisis(hoy) }] },
+      contents: [{ role: 'user', parts: [{ text: JSON.stringify(datos) }] }],
+      generationConfig: { temperature: 0.3, maxOutputTokens: 2048 },
+    }),
+    signal: AbortSignal.timeout(25_000),
+  });
+  if (!res.ok) throw await leerError(res);
+
+  const partes = (await res.json()).candidates?.[0]?.content?.parts ?? [];
+  return partes
+    .filter((p) => typeof p.text === 'string' && !p.thought)
+    .map((p) => p.text)
+    .join('\n')
+    .trim();
+}
+
+async function analisisConClaude(datos, hoy) {
+  const url = process.env.ANTHROPIC_URL ?? 'https://api.anthropic.com/v1/messages';
+  const res = await solicitarConReintento(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': process.env.ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: process.env.MODELO_ANTHROPIC ?? process.env.MODELO_IA ?? 'claude-haiku-5-5',
+      max_tokens: 700,
+      system: instruccionesAnalisis(hoy),
+      messages: [{ role: 'user', content: JSON.stringify(datos) }],
+    }),
+    signal: AbortSignal.timeout(25_000),
+  });
+  if (!res.ok) throw await leerError(res);
+
+  return ((await res.json()).content ?? [])
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+    .trim();
+}
+
+// Pide a la IA que interprete los datos calculados y devuelve el texto del análisis
+export async function analizarConIA(datos, hoy) {
+  let texto;
+  switch (proveedor()) {
+    case 'gemini':
+      texto = await analisisConGemini(datos, hoy);
+      break;
+    case 'claude':
+      texto = await analisisConClaude(datos, hoy);
+      break;
+    default:
+      throw new Error('No hay ninguna clave de IA configurada (GEMINI_API_KEY o ANTHROPIC_API_KEY).');
+  }
+  if (!texto) throw new Error('La IA no devolvió el análisis.');
+  return texto;
 }

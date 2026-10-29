@@ -19,8 +19,9 @@ for (const variable of ['GEMINI_API_KEY', 'GEMINI_URL', 'ANTHROPIC_URL', 'MODELO
 
 const db = await import('./db.js');
 const { ejecutar } = await import('./acciones.js');
-const { interpretarComando } = await import('./comandos.js');
-const { interpretar } = await import('./ia.js');
+const { interpretarComando, AYUDA } = await import('./comandos.js');
+const { interpretar, analizarConIA } = await import('./ia.js');
+const { datosAnalisis, responderAnalisis } = await import('./analisis.js');
 const { crearServidorApi } = await import('./api.js');
 const { pesos, rangoPeriodo, rangoMes, valida } = await import('./fechas.js');
 const { parseMonto, tieneDecimalConPunto } = await import('./montos.js');
@@ -284,7 +285,7 @@ test('IA simulada: interpreta varias herramientas en un mensaje', async () => {
     assert.equal(r.acciones[1].datos.monto, 12000);
     assert.equal(r.texto, 'Listo, anoté los dos.');
     assert.equal(recibido.cabeceras['x-api-key'], 'clave-falsa');
-    assert.equal(recibido.cuerpo.tools.length, 6);
+    assert.equal(recibido.cuerpo.tools.length, 7);
     assert.match(recibido.cuerpo.system, /Hoy es 2026-10-17/);
     assert.equal(typeof interpretar, 'function');
   } finally {
@@ -326,6 +327,113 @@ test('IA simulada: Gemini usa su modelo y sus herramientas sin salir a internet'
     delete process.env.MODELO_GEMINI;
     globalThis.fetch = originalFetch;
   }
+});
+
+// --- Análisis de gastos ---
+const AN = 'persona-analisis';
+const HOY_AN = '2026-10-17'; // día 17 de 31
+const mov = (tipo, monto, categoria, fecha, id) =>
+  db.agregarMovimiento({ usuario: AN, tipo, monto, categoria, descripcion: 'secreto personal', fecha, mensajeId: `an:${id}` });
+
+test('análisis: compara este mes con el mismo tramo del mes pasado', () => {
+  mov('ingreso', 1000000, 'Salario', '2026-10-01', 1);
+  mov('gasto', 100000, 'Comida', '2026-10-03', 2);
+  mov('gasto', 20000, 'Transporte', '2026-10-10', 3);
+  mov('gasto', 60000, 'Ocio', '2026-10-12', 4);
+  mov('gasto', 50000, 'Comida', '2026-09-05', 5);
+  mov('gasto', 40000, 'Transporte', '2026-09-10', 6);
+  mov('gasto', 70000, 'Comida', '2026-09-25', 7); // después del día 17: no entra en el tramo
+  db.fijarPresupuesto(AN, 'Ocio', 100000);
+
+  const d = datosAnalisis(AN, HOY_AN);
+  assert.equal(d.hay_datos, true);
+  assert.equal(d.este_mes.gastos, 180000);
+  assert.equal(d.este_mes.ahorro_pct, 82);
+  assert.equal(d.mes_pasado_mismo_tramo.gastos, 90000);
+  assert.equal(d.variacion_gastos_pct, 100);
+  assert.equal(d.periodo.mes_pasado_hasta, '2026-09-17');
+  assert.equal(d.periodo.avance_del_mes_pct, 55);
+  const por = Object.fromEntries(d.categorias.map((c) => [c.categoria, c]));
+  assert.equal(por.Comida.variacion_pct, 100);
+  assert.equal(por.Transporte.variacion_pct, -50);
+  assert.equal(por.Ocio.variacion_pct, null);
+  assert.deepEqual(d.presupuestos, [{ categoria: 'Ocio', limite: 100000, gastado: 60000, porcentaje: 60 }]);
+  assert.deepEqual(d.mayores_gastos[0], { monto: 100000, categoria: 'Comida' });
+  assert.ok(!JSON.stringify(d).includes('secreto personal'), 'no debe incluir descripciones escritas por la persona');
+});
+
+test('análisis: sin movimientos no llama a la IA y no mezcla datos entre personas', async () => {
+  let llamadas = 0;
+  const generar = async () => { llamadas++; return 'x'; };
+  const texto = await responderAnalisis('persona-sin-datos', HOY_AN, { generar });
+  assert.match(texto, /Todavía no tengo movimientos suficientes/);
+  assert.equal(llamadas, 0);
+  assert.equal(datosAnalisis('persona-sin-datos', HOY_AN).hay_datos, false);
+});
+
+test('análisis: usa la IA y, si falla, responde con un análisis básico', async () => {
+  let recibido;
+  const bien = await responderAnalisis(AN, HOY_AN, {
+    generar: async (datos, hoy) => { recibido = { datos, hoy }; return 'Vas bien.'; },
+  });
+  assert.equal(bien, '📈 Vas bien.');
+  assert.equal(recibido.hoy, HOY_AN);
+  assert.equal(recibido.datos.este_mes.gastos, 180000);
+
+  const consolaError = console.error;
+  console.error = () => {};
+  try {
+    const caido = await responderAnalisis(AN, HOY_AN, { generar: async () => { throw new Error('timeout'); } });
+    assert.match(caido, /Gastos: \$180\.000/);
+    assert.match(caido, /Comida: \$100\.000 \(\+100%\)/);
+    assert.match(caido, /Ocio: \$60\.000 \(nuevo este mes\)/);
+    assert.match(caido, /La IA no estuvo disponible/);
+  } finally {
+    console.error = consolaError;
+  }
+
+  const sinIA = await responderAnalisis(AN, HOY_AN, { generar: null });
+  assert.doesNotMatch(sinIA, /La IA no estuvo disponible/);
+  assert.match(sinIA, /Tus mayores gastos: \$100\.000 en Comida/);
+});
+
+test('IA simulada: el análisis envía solo cifras y sin herramientas', async () => {
+  const originalFetch = globalThis.fetch;
+  const respuesta = (cuerpo) => new Response(JSON.stringify(cuerpo), { status: 200, headers: { 'content-type': 'application/json' } });
+  let recibido;
+  try {
+    const datos = datosAnalisis(AN, HOY_AN);
+
+    globalThis.fetch = async (_url, opciones) => {
+      recibido = JSON.parse(opciones.body);
+      return respuesta({ content: [{ type: 'text', text: 'Vas bien este mes.' }] });
+    };
+    assert.equal(await analizarConIA(datos, HOY_AN), 'Vas bien este mes.');
+    assert.equal(recibido.tools, undefined);
+    assert.match(recibido.system, /Usa SOLO los números del JSON/);
+    assert.equal(JSON.parse(recibido.messages[0].content).este_mes.gastos, 180000);
+
+    process.env.GEMINI_API_KEY = 'clave-falsa-gemini';
+    globalThis.fetch = async (_url, opciones) => {
+      recibido = JSON.parse(opciones.body);
+      return respuesta({ candidates: [{ content: { parts: [{ text: 'razonando', thought: true }, { text: 'Gastas más en Comida.' }] } }] });
+    };
+    assert.equal(await analizarConIA(datos, HOY_AN), 'Gastas más en Comida.');
+    assert.equal(recibido.tools, undefined);
+
+    globalThis.fetch = async () => respuesta({ candidates: [{ content: { parts: [] } }] });
+    await assert.rejects(() => analizarConIA(datos, HOY_AN), /no devolvió el análisis/);
+  } finally {
+    delete process.env.GEMINI_API_KEY;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('/analisis y la acción analizar_gastos', () => {
+  assert.deepEqual(interpretarComando('/analisis'), { acciones: [{ nombre: 'analizar_gastos', datos: {} }] });
+  assert.equal(interpretarComando('/analizar').acciones[0].nombre, 'analizar_gastos');
+  assert.equal(ejecutar({ nombre: 'analizar_gastos', datos: {} }, { usuario: U, hoy: HOY }), null);
+  assert.match(AYUDA, /\/analisis/);
 });
 
 test('API para la página: token, resumen, movimientos y presupuestos', async () => {
