@@ -14,6 +14,7 @@ import { fechaBogota } from './fechas.js';
 import { hayIA, interpretar, nombreProveedor } from './ia.js';
 import { interpretarComando } from './comandos.js';
 import { ejecutar } from './acciones.js';
+import { responderAnalisis } from './analisis.js';
 import { iniciarApi } from './api.js';
 import { acotarAcciones } from './politicas.js';
 import { tieneDecimalConPunto } from './montos.js';
@@ -309,6 +310,7 @@ async function atender(sock, jid, msg, usuario, texto) {
 
   const acotadas = acotarAcciones(acciones);
   const efectos = [];
+  let completado = false;
   try {
     const procesado = db.enTransaccion(() => {
       // Revisa dentro del bloqueo de escritura para cubrir dos instancias del bot.
@@ -325,10 +327,21 @@ async function atender(sock, jid, msg, usuario, texto) {
     });
     if (!procesado) return;
     efectos.forEach((efecto) => efecto());
+    completado = true;
   } catch (error) {
     console.error('No se pudo completar el mensaje de forma atómica:', error.message);
     respuestas.length = 0;
     respuestas.push('⚠️ No pude completar este mensaje; no guardé cambios parciales. Puedes volver a intentarlo.');
+  }
+
+  // El análisis de gastos solo lee datos y llama a la IA, así que va fuera de la transacción.
+  if (completado && acotadas.some((accion) => accion?.nombre === 'analizar_gastos')) {
+    try {
+      respuestas.push(await responderAnalisis(usuario, hoy));
+    } catch (error) {
+      console.error('No se pudo analizar los gastos:', error.message);
+      respuestas.push('⚠️ No pude analizar tus gastos ahora mismo. Intenta de nuevo en un momento.');
+    }
   }
 
   if (respuestas.length === 0) {

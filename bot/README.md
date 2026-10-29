@@ -75,7 +75,10 @@ Texto libre (necesita la clave de IA):
 - "compré aceite por 20 mil" · "me pagaron 1,5 millones" · "ayer gasté 8 lucas en bus"
 - "cuánto gasté esta semana" · "qué gasté en comida este mes"
 - "ponme un presupuesto de 300 mil en comida" · "me equivoqué, borra lo último"
+- "cómo van mis gastos" · "en qué estoy fallando" (compara este mes con el mismo tramo del mes pasado,
+  revisa tus presupuestos y te da observaciones concretas)
 - "¿cómo empiezo a ahorrar?" (respuestas generales, no es asesoría financiera)
+- Solo responde de finanzas personales; otros temas los rechaza con amabilidad.
 
 Comandos (funcionan siempre, también sin IA):
 ```
@@ -83,6 +86,7 @@ Comandos (funcionan siempre, también sin IA):
 /resumen [hoy|semana|mes|mes_pasado|anio]
 /ultimos [cantidad]    /deshacer
 /presupuesto comida 300000          /presupuestos
+/analisis
 ```
 Categorías (editables en `categorias.js`): Comida, Transporte, Servicios, Estudio, Salud, Ocio,
 Hogar, Ropa, Deudas, Ahorro, Salario, Ventas, Otros.
@@ -143,6 +147,11 @@ La restauración conserva el archivo original. Detén el bot antes de restaurar 
 - **Tus mensajes se envían al proveedor IA configurado** para interpretarlos (solo el texto de
   cada mensaje, no tu historial): Gemini si hay `GEMINI_API_KEY`; de lo contrario Anthropic si
   hay `ANTHROPIC_API_KEY`. Sin esas claves solo funcionan los comandos.
+- **El análisis de gastos (`/analisis` o "cómo van mis gastos") sí envía tus cifras** al proveedor
+  IA: totales por categoría de este mes y del mismo tramo del mes pasado, presupuestos con lo
+  gastado y tus tres mayores gastos (monto y categoría). No envía las descripciones que escribes.
+  Las cuentas las hace el bot; la IA solo las interpreta. Si la IA no responde, el bot contesta
+  con un análisis básico calculado localmente.
 - **Solo responde a los números de `NUMEROS_PERMITIDOS`.** Los remitentes no autorizados se
   ignoran y solo se registra un contador, sin números telefónicos.
 - Los datos viven en `finanzas.db` (más `finanzas.db-wal` y `-shm` mientras corre). Para un
