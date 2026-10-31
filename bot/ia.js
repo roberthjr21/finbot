@@ -68,6 +68,40 @@ const HERRAMIENTAS = [
     descripcion: 'Muestra los presupuestos mensuales y cuánto se ha gastado de cada uno.',
   },
   {
+    nombre: 'registrar_deuda',
+    descripcion:
+      'Anota que la persona DEBE plata a alguien (todavía no la ha pagado). No cambia su saldo. ' +
+      'Úsala con frases como "debo 11 mil", "le debo 50 mil a Juan", "me prestó 100 mil María". Una llamada por cada deuda.',
+    propiedades: {
+      persona: { type: 'string', description: 'A quién le debe (nombre como lo dijo). Si no lo dijo, usa "Sin nombre".' },
+      monto: { type: 'integer', minimum: 1, description: 'Monto que debe, en pesos colombianos, entero.' },
+      descripcion: { type: 'string', description: 'Motivo muy corto (2 a 5 palabras), si lo dijo.' },
+    },
+    requeridas: ['persona', 'monto'],
+  },
+  {
+    nombre: 'abonar_deuda',
+    descripcion:
+      'Registra un pago (abono) a una deuda con una persona: se resta de lo que debe y se anota como gasto en Deudas. ' +
+      'Úsala con "voy a abonar 5 mil a Juan", "le pagué 20 mil a María", "ya le pagué todo a Pedro". ' +
+      'Si dice que pagó toda la deuda sin decir monto, pon todo=true.',
+    propiedades: {
+      persona: { type: 'string', description: 'A quién le paga.' },
+      monto: { type: 'integer', minimum: 1, description: 'Monto abonado en pesos colombianos. Omítelo si pagó todo.' },
+      todo: { type: 'boolean', description: 'true si pagó toda la deuda sin decir el monto.' },
+    },
+    requeridas: ['persona'],
+  },
+  {
+    nombre: 'consultar_deudas',
+    descripcion:
+      'Dice cuánto debe la persona. Con "persona" muestra lo que le debe a esa persona y si ya terminó de pagarle; ' +
+      'sin "persona" lista todas sus deudas. Úsala con "cuánto le debo a Juan", "cuánto debo", "a quién le debo".',
+    propiedades: {
+      persona: { type: 'string', description: 'Opcional: de quién preguntar.' },
+    },
+  },
+  {
     nombre: 'analizar_gastos',
     descripcion:
       'Analiza cómo van los gastos de la persona este mes frente al mes pasado y en qué categorías se está pasando. ' +
@@ -207,7 +241,7 @@ Reglas:
 - La moneda usa el formato colombiano: punto para miles y coma para decimales. No inventes ni adivines montos con separadores ambiguos.
 - Si dice "ayer", "el lunes", etc., calcula la fecha a partir de hoy. Si no dice fecha, no la envíes.
 - Si falta el monto o no se entiende qué pasó, NO registres nada: haz una pregunta corta.
-- Deudas: si dice que DEBE algo o que tiene que pagarlo (por ejemplo "debo 50 mil de un reloj") y no dice que ya lo pagó, NO registres un gasto: pregunta en una frase si ya lo pagó. Si dice que ya lo pagó ("pagué", "ya pagué", "abono"), regístralo como gasto en la categoría Deudas.
+- Deudas: si dice que DEBE plata ("debo 11 mil", "le debo 50 mil a Juan"), usa registrar_deuda (NO es un gasto: la plata aún no salió). Si abona o paga parte de una deuda ("voy a abonar 5 mil a Juan", "le pagué 20 mil a María"), usa abonar_deuda; si dice que pagó todo sin monto, abonar_deuda con todo=true. Para saber cuánto debe ("cuánto le debo a Juan", "cuánto debo en total"), usa consultar_deudas. Un gasto normal de pagar una cuota o factura que NO es deuda con una persona (tarjeta, servicio) sigue siendo registrar_movimiento en la categoría que corresponda (Deudas si es un crédito o tarjeta).
 - Si habla en futuro ("voy a gastar 3700 en pasaje"), regístralo igual como gasto de hoy y agrega una frase corta diciendo que lo anotaste como gasto de hoy y que, si todavía no lo paga, puede borrar el último con /deshacer.
 - Usa la categoría Mascotas para gastos de gatos, perros u otras mascotas (comida, veterinario). Usa Otros solo si ninguna categoría encaja.
 - Para saber cuánto gastó o ganó en un periodo usa consultar_resumen. Para saber cuánta plata tiene, cuánto le queda o cuál es su saldo, usa consultar_saldo. Para ver lo último, ultimos_movimientos; para iniciar un borrado pide confirmación con deshacer_ultimo; para límites mensuales, fijar_presupuesto o ver_presupuestos.

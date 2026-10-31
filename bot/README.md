@@ -95,12 +95,23 @@ Comandos (funcionan siempre, también sin IA):
 /ultimos [cantidad]    /deshacer
 /presupuesto comida 300000          /presupuestos
 /analisis                           /saldo
+/debo 50000 Juan   /abono 20000 Juan   /deudas [persona]
 ```
 Categorías (editables en `categorias.js`): Comida, Transporte, Servicios, Estudio, Salud, Ocio,
 Hogar, Mascotas, Ropa, Deudas, Ahorro, Salario, Ventas, Otros.
 
-Deudas: si dices que *debes* algo sin decir que ya lo pagaste, el bot pregunta antes de registrar
-un gasto. Cuando dices "pagué…", lo registra en Deudas.
+Deudas (libreta de lo que debes):
+- "debo 11 mil a Juan" · "le debo 50 mil a María por el almuerzo" → anota la deuda. **No cambia tu saldo**:
+  la plata aún no salió.
+- "voy a abonar 5 mil a Juan" · "le pagué 20 mil a María" · "ya le pagué todo a Pedro" → resta de la deuda
+  y registra el pago como gasto en la categoría Deudas (ahí sí baja tu saldo). Responde
+  "Sigues debiéndole $X" o "✅ Ya pagaste toda la deuda". No deja abonar más de lo que debes.
+- "cuánto le debo a Juan" · "cuánto debo en total" · "a quién le debo" → muestra lo que queda por pagar.
+- Los nombres no distinguen mayúsculas ni tildes ("juan" es "Juan Pérez"); si hay dos Juan, te pide precisar.
+- `/saldo` muestra aparte cuánto debes en total. `/deshacer` también borra la última deuda anotada
+  (o el último abono, que devuelve la deuda a como estaba).
+- Comandos sin IA: `/debo 50000 Juan` · `/abono 20000 Juan` · `/abono todo Juan` · `/deudas [persona]`.
+- Se guardan en la tabla `deudas` de `finanzas.db`; las bases anteriores se actualizan solas al arrancar.
 
 ## API para tu página
 Solo lectura, con token. Por defecto escucha en `127.0.0.1:3001` y acepta peticiones desde
