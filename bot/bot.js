@@ -18,6 +18,9 @@ import { responderAnalisis } from './analisis.js';
 import { iniciarApi } from './api.js';
 import { acotarAcciones } from './politicas.js';
 import { tieneDecimalConPunto } from './montos.js';
+import { crearLimitador, entero } from './limites.js';
+import * as acceso from './acceso.js';
+import { soloNumero, numeroValido, esChatIndividual, identificarRemitente } from './identidad.js';
 
 // ==========================================
 // CONFIGURACIÓN
@@ -29,6 +32,21 @@ const PERMITIDOS = (process.env.NUMEROS_PERMITIDOS ?? '')
   .split(',')
   .map((n) => n.replace(/\D/g, ''))
   .filter(Boolean);
+
+// Registro abierto (por defecto): cualquier persona que escriba al bot desde un chat individual
+// obtiene su propia cuenta. Con REGISTRO_ABIERTO=0 solo usan el bot los NUMEROS_PERMITIDOS.
+const REGISTRO_ABIERTO = process.env.REGISTRO_ABIERTO !== '0';
+const BLOQUEADOS = (process.env.NUMEROS_BLOQUEADOS ?? '')
+  .split(',')
+  .map((n) => n.replace(/\D/g, ''))
+  .filter(Boolean);
+
+// Límites contra abuso (valores por defecto razonables para uso normal)
+const MAX_MENSAJES_MINUTO = entero('MAX_MENSAJES_MINUTO', 20);
+const MAX_MENSAJES_DIA = entero('MAX_MENSAJES_DIA', 300);
+const MAX_IA_DIA = entero('MAX_IA_DIA', 150);
+const limitadorMensajes = crearLimitador({ max: MAX_MENSAJES_MINUTO, ventanaMs: 60 * 1000 });
+const avisadosPorExceso = new Set();
 
 const DEBUG = process.env.DEBUG === '1';
 const AUTOCHAT = process.env.MODO_AUTOCHAT === '1';
@@ -95,94 +113,6 @@ function segundos(t) {
   return Number(t) || 0;
 }
 
-// Extrae el identificador sin el sufijo de WhatsApp.
-const soloNumero = (jid) =>
-  String(jid ?? '')
-    .split('@')[0]
-    .split(':')[0];
-
-// ==========================================
-// AUTORIZACIÓN DE USUARIOS
-// ==========================================
-
-// Devuelve un número autorizado o null.
-// Nunca autoriza un LID solo por su identificador.
-async function usuarioPermitido(sock, msg) {
-  const candidatos = [
-    msg.key.remoteJid,
-    msg.key.remoteJidAlt,
-    msg.key.participant,
-    msg.key.participantAlt,
-  ].filter(Boolean);
-
-  // Los newsletters no son contactos personales.
-  if (
-    candidatos.some((jid) =>
-      String(jid).endsWith('@newsletter')
-    )
-  ) {
-    return null;
-  }
-
-  // 1. Comprobar números telefónicos explícitos.
-  for (const jid of candidatos) {
-    const id = String(jid);
-
-    if (!id.endsWith('@s.whatsapp.net')) continue;
-
-    const numero = soloNumero(id);
-
-    if (PERMITIDOS.includes(numero)) {
-      return numero;
-    }
-  }
-
-  // 2. Resolver identificadores LID cuando sea posible.
-  const mapping = sock.signalRepository?.lidMapping;
-
-  if (typeof mapping?.getPNForLID !== 'function') {
-    if (DEBUG) {
-      console.log(
-        '[debug] Baileys no expone getPNForLID en esta sesión.'
-      );
-    }
-
-    return null;
-  }
-
-  for (const jid of candidatos) {
-    const id = String(jid);
-
-    if (!id.endsWith('@lid')) continue;
-
-    // Algunas versiones pueden esperar el identificador
-    // completo y otras el identificador sin el sufijo.
-    const posiblesLid = [id, soloNumero(id)];
-
-    for (const lid of posiblesLid) {
-      try {
-        const pn = await mapping.getPNForLID(lid);
-
-        if (!pn) continue;
-
-        const numero = soloNumero(pn);
-
-        if (PERMITIDOS.includes(numero)) {
-          if (DEBUG) console.log('[debug] Identidad autorizada resuelta mediante LID.');
-
-          return numero;
-        }
-      } catch (error) {
-        if (DEBUG) {
-          console.warn('No se pudo resolver una identidad LID autorizada.');
-        }
-      }
-    }
-  }
-
-  return null;
-}
-
 // ==========================================
 // MODO CHAT CONTIGO MISMO
 // ==========================================
@@ -195,8 +125,22 @@ const numerosPropios = (sock) =>
 const esChatPropio = (sock, jid) =>
   numerosPropios(sock).includes(soloNumero(jid));
 
+// El número propio del bot (solo con MODO_AUTOCHAT), si es un teléfono válido
 const usuarioPropio = (sock) =>
-  PERMITIDOS.find((n) => numerosPropios(sock).includes(n)) ?? null;
+  numerosPropios(sock).find(numeroValido) ?? null;
+
+// ¿Puede este número usar el bot? Bloqueados nunca; con registro cerrado, solo los permitidos.
+const admitido = (numero) =>
+  !BLOQUEADOS.includes(numero) && (REGISTRO_ABIERTO || PERMITIDOS.includes(numero));
+
+const BIENVENIDA =
+  '👋 ¡Hola! Soy FinBot, tu ayudante de finanzas personales.\n' +
+  'Acabo de crear tu cuenta: empieza en $0 y solo tú ves tus datos.\n\n' +
+  'Cuéntame tus gastos e ingresos como hablas, por ejemplo:\n' +
+  '• "gasté 15 mil en almuerzo"\n' +
+  '• "me pagaron 1,5 millones"\n' +
+  '• "cuánta plata tengo"\n\n' +
+  'Escribe /ayuda para ver todo lo que puedo hacer.';
 
 // ==========================================
 // CONTROL DE MENSAJES ENVIADOS
@@ -238,15 +182,31 @@ async function enviarTexto(sock, jid, texto, citado) {
 // ==========================================
 
 async function atender(sock, jid, msg, usuario, texto) {
-  const id = msg.key.id;
+  // La clave incluye al usuario: dos personas nunca comparten marca de "ya procesado"
+  const id = `${usuario}:${msg.key.id}`;
 
   try {
-    if (db.yaProcesado(id)) return;
+    if (db.yaProcesadoDe(usuario, msg.key.id)) return;
   } catch (error) {
     console.error('No se pudo consultar el estado del mensaje:', error.message);
     await enviarTexto(sock, jid, '⚠️ La base de datos no está disponible. No repetí ni registré el movimiento.', msg);
     return;
   }
+
+  // Límite diario por persona (mensajes e IA), para que nadie agote la cuota de todos
+  let uso = { mensajes: 0, ia: 0 };
+  try {
+    uso = db.sumarUso(usuario, fechaBogota(), { mensajes: 1 });
+  } catch (error) {
+    console.error('No se pudo contar el uso diario:', error.message);
+  }
+  if (uso.mensajes > MAX_MENSAJES_DIA) {
+    if (uso.mensajes === MAX_MENSAJES_DIA + 1) {
+      await enviarTexto(sock, jid, '⏳ Llegaste al límite de mensajes de hoy. Mañana puedes seguir usándome.', msg);
+    }
+    return;
+  }
+  const iaAgotada = uso.ia >= MAX_IA_DIA;
 
   const ts = segundos(msg.messageTimestamp);
 
@@ -271,7 +231,8 @@ async function atender(sock, jid, msg, usuario, texto) {
       respuestas.push(
         'No conozco ese comando. Escribe /ayuda para ver los disponibles.'
       );
-    } else if (hayIA()) {
+    } else if (hayIA() && !iaAgotada) {
+      db.sumarUso(usuario, fechaBogota(), { ia: 1 });
       const r = await interpretar(texto, hoy);
 
       acciones = r.acciones;
@@ -281,6 +242,11 @@ async function atender(sock, jid, msg, usuario, texto) {
       }
     } else if (atajoSinIA(texto)) {
       acciones = atajoSinIA(texto).acciones;
+    } else if (iaAgotada) {
+      respuestas.push(
+        '⏳ Llegaste al límite diario de mensajes con IA. Hoy puedes seguir con comandos, por ejemplo:\n' +
+        '/gasto 20000 comida almuerzo\n\nEscribe /ayuda para ver más.'
+      );
     } else {
       respuestas.push(
         'La IA no está configurada todavía. Mientras tanto usa comandos, por ejemplo:\n' +
@@ -325,7 +291,7 @@ async function atender(sock, jid, msg, usuario, texto) {
   try {
     const procesado = db.enTransaccion(() => {
       // Revisa dentro del bloqueo de escritura para cubrir dos instancias del bot.
-      if (db.yaProcesado(id)) return false;
+      if (db.yaProcesadoDe(usuario, msg.key.id)) return false;
       acotadas.forEach((accion, indice) => {
         const r = ejecutar(accion, { usuario, hoy, mensajeId: id, indice, efectos });
         if (r) respuestas.push(r);
@@ -376,10 +342,10 @@ async function atender(sock, jid, msg, usuario, texto) {
 // MENSAJES SIN TEXTO
 // ==========================================
 
-async function responderSinTexto(sock, jid, msg) {
+async function responderSinTexto(sock, jid, msg, usuario) {
   const procesado = db.enTransaccion(() => {
-    if (db.yaProcesado(msg.key.id)) return false;
-    db.marcarProcesado(msg.key.id);
+    if (db.yaProcesadoDe(usuario, msg.key.id)) return false;
+    db.marcarProcesado(`${usuario}:${msg.key.id}`);
     return true;
   });
   if (!procesado) return;
@@ -509,15 +475,8 @@ async function iniciar() {
 
         const jid = msg.key.remoteJid;
 
-        // Ignorar estados, grupos y newsletters.
-        if (
-          !jid ||
-          jid === 'status@broadcast' ||
-          jid.endsWith('@g.us') ||
-          jid.endsWith('@newsletter')
-        ) {
-          continue;
-        }
+        // Solo chats individuales: se ignoran estados, grupos, listas de difusión y newsletters.
+        if (!jid || !esChatIndividual(jid)) continue;
 
         // Ignorar ecos de mensajes enviados por el bot.
         if (enviadosPorBot.has(msg.key.id)) continue;
@@ -543,7 +502,7 @@ async function iniciar() {
           usuario = usuarioPropio(sock);
 
           if (!usuario) {
-            console.log('El número del chat propio no está en NUMEROS_PERMITIDOS.');
+            console.log('No pude obtener el número propio del bot.');
 
             continue;
           }
@@ -551,7 +510,7 @@ async function iniciar() {
           // Verificar autorización antes de procesar el mensaje.
           autorizacionesEnCurso++;
           try {
-            usuario = await usuarioPermitido(sock, msg);
+            usuario = await identificarRemitente(sock, msg, { depurar: DEBUG });
           } finally {
             autorizacionesEnCurso--;
           }
@@ -559,14 +518,35 @@ async function iniciar() {
           // El cierre pudo empezar mientras se resolvía el identificador.
           if (cerrando) return;
 
-          if (!usuario) {
-            remitentesNoAutorizados++;
-            if (remitentesNoAutorizados === 1 || remitentesNoAutorizados % 10 === 0) {
-              console.warn(`Mensajes no autorizados ignorados: ${remitentesNoAutorizados}.`);
-            }
+        }
 
-            continue;
+        // Quién puede usar el bot: bloqueados nunca; con registro cerrado, solo los permitidos.
+        if (!usuario || !admitido(usuario)) {
+          remitentesNoAutorizados++;
+          if (remitentesNoAutorizados === 1 || remitentesNoAutorizados % 10 === 0) {
+            console.warn(`Mensajes ignorados (sin teléfono válido o no admitidos): ${remitentesNoAutorizados}.`);
           }
+
+          continue;
+        }
+
+        // Cuenta del remitente. Una cuenta nueva solo se crea por un mensaje reciente (no por
+        // historial viejo) y empieza sin movimientos, es decir, con saldo $0.
+        let cuenta = db.usuarioPorTelefono(usuario);
+        let esNueva = false;
+        if (!cuenta) {
+          const tsMsg = segundos(msg.messageTimestamp);
+          const reciente = !tsMsg || Date.now() / 1000 - tsMsg < 600;
+          if (type !== 'notify' || !reciente) continue;
+          cuenta = db.asegurarUsuario(usuario);
+          esNueva = cuenta.nuevo;
+        }
+        if (cuenta.estado !== 'activo') continue;
+
+        if (esNueva) {
+          encolar(() => enviarTexto(sock, jid, BIENVENIDA, msg));
+          // Un saludo suelto no se procesa; un mensaje con cifras o un comando, sí
+          if (!/\d|^\//.test(texto)) continue;
         }
 
         if (DEBUG) {
@@ -590,10 +570,21 @@ async function iniciar() {
 
           if (TIPOS_MEDIA.has(tipo)) {
             encolar(() =>
-              responderSinTexto(sock, jid, msg)
+              responderSinTexto(sock, jid, msg, usuario)
             );
           }
 
+          continue;
+        }
+
+        // Límite de mensajes por minuto, con un solo aviso por ventana
+        const limite = limitadorMensajes.intentar(usuario);
+        if (!limite.ok) {
+          if (!avisadosPorExceso.has(usuario)) {
+            avisadosPorExceso.add(usuario);
+            setTimeout(() => avisadosPorExceso.delete(usuario), 60 * 1000).unref();
+            encolar(() => enviarTexto(sock, jid, '⏳ Vas muy rápido. Espera un minuto y vuelve a escribirme.', msg));
+          }
           continue;
         }
 
@@ -609,16 +600,18 @@ async function iniciar() {
 // VALIDAR CONFIGURACIÓN
 // ==========================================
 
-if (PERMITIDOS.length === 0) {
+if (REGISTRO_ABIERTO) {
+  console.log(
+    'Registro abierto: quien escriba al bot desde un chat individual obtiene su propia cuenta.' +
+    `${AUTOCHAT ? ' (modo chat contigo mismo activado)' : ''}`
+  );
+} else if (PERMITIDOS.length === 0) {
   console.warn(
-    '⚠️ NUMEROS_PERMITIDOS está vacío. ' +
+    '⚠️ REGISTRO_ABIERTO=0 y NUMEROS_PERMITIDOS está vacío: nadie podrá usar el bot. ' +
     'Revisa tu archivo .env.'
   );
 } else {
-  console.log(
-    `Números autorizados configurados: ${PERMITIDOS.length}` +
-    `${AUTOCHAT ? ' (modo chat contigo mismo activado)' : ''}`
-  );
+  console.log(`Registro cerrado: ${PERMITIDOS.length} número(s) autorizado(s).`);
 }
 
 if (PERMITIDOS.includes('573001234567')) {
@@ -644,7 +637,14 @@ if (hayIA()) {
 // INICIAR SERVICIOS
 // ==========================================
 
-const servidorApi = iniciarApi(PERMITIDOS[0]);
+// Envía un mensaje a una cuenta registrada con la MISMA sesión de WhatsApp del bot.
+// Solo lo usa la API interna para los códigos de acceso a la web.
+async function enviarAUsuario(telefono, texto) {
+  if (!socketActivo) throw new Error('WhatsApp no está conectado');
+  registrarEnviado(await socketActivo.sendMessage(`${telefono}@s.whatsapp.net`, { text: MARCA + texto }));
+}
+
+const servidorApi = iniciarApi({ enviar: enviarAUsuario });
 
 async function apagar(signal) {
   if (cerrando) return;

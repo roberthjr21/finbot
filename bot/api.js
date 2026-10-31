@@ -5,24 +5,19 @@ import crypto from 'node:crypto';
 import * as db from './db.js';
 import { CATEGORIAS } from './categorias.js';
 import { fechaBogota, rangoMes, valida } from './fechas.js';
+import * as acceso from './acceso.js';
 
 // =====================================================
 // CONFIGURACIÓN
 // =====================================================
 
-export function crearServidorApi(usuarioPorDefecto) {
+// "enviar(telefono, texto)" manda un mensaje por la sesión de WhatsApp del bot (solo para los códigos de acceso).
+export function crearServidorApi({ enviar } = {}) {
   const token = process.env.API_TOKEN?.trim();
 
   if (!token) {
     console.warn(
       '⚠️ API desactivada: no se detectó API_TOKEN en .env.'
-    );
-    return null;
-  }
-
-  if (!usuarioPorDefecto) {
-    console.error(
-      '❌ API no iniciada: falta el usuario predeterminado.'
     );
     return null;
   }
@@ -84,6 +79,54 @@ export function crearServidorApi(usuarioPorDefecto) {
     res.end(JSON.stringify(cuerpo));
   }
 
+  const enmascarar = (telefono) => `••••••${String(telefono).slice(-4)}`;
+
+  function leerJson(req, limite = 2048) {
+    return new Promise((resolve, reject) => {
+      const partes = [];
+      let tamano = 0;
+      req.on('data', (parte) => {
+        tamano += parte.length;
+        if (tamano > limite) { reject(new Error('Cuerpo demasiado grande')); req.destroy(); return; }
+        partes.push(parte);
+      });
+      req.on('end', () => {
+        try { resolve(JSON.parse(Buffer.concat(partes).toString('utf8') || '{}')); }
+        catch { reject(new Error('JSON inválido')); }
+      });
+      req.on('error', reject);
+    });
+  }
+
+  // Rutas internas, solo para el servidor de la web (llevan el token del servidor).
+  // Nunca aceptan un teléfono para elegir una cuenta de datos: solo inician o cierran el acceso web.
+  async function rutaInterna(req, res, ruta, cabeceras) {
+    let cuerpo;
+    try { cuerpo = await leerJson(req); } catch { responder(res, 400, { ok: false }, cabeceras); return; }
+    const ip = String(req.headers['x-cliente-ip'] ?? '?').slice(0, 64);
+
+    switch (ruta) {
+      case '/interno/codigo': {
+        if (typeof enviar !== 'function') { responder(res, 503, { ok: false, motivo: 'no_disponible' }, cabeceras); return; }
+        const r = await acceso.solicitarCodigo({ telefono: cuerpo.telefono, ip, enviar });
+        responder(res, r.ok ? 200 : r.motivo === 'espera' ? 429 : 400, r, cabeceras);
+        return;
+      }
+      case '/interno/verificar': {
+        const r = acceso.verificarCodigo({ telefono: cuerpo.telefono, codigo: cuerpo.codigo, ip });
+        responder(res, r.ok ? 200 : 401, r.ok ? r : { ok: false }, cabeceras);
+        return;
+      }
+      case '/interno/salir': {
+        acceso.cerrarSesion(cuerpo.token);
+        responder(res, 200, { ok: true }, cabeceras);
+        return;
+      }
+      default:
+        responder(res, 404, { error: 'No existe esa ruta' }, cabeceras);
+    }
+  }
+
   // ---------------------------------------------------
   // Servidor
   // ---------------------------------------------------
@@ -120,7 +163,7 @@ export function crearServidorApi(usuarioPorDefecto) {
       return;
     }
 
-    if (req.method !== 'GET') {
+    if (req.method !== 'GET' && req.method !== 'POST') {
       responder(
         res,
         405,
@@ -140,6 +183,20 @@ export function crearServidorApi(usuarioPorDefecto) {
       return;
     }
 
+    // POST: solo rutas internas del servidor, y nunca desde un navegador
+    if (req.method === 'POST') {
+      if (origenSolicitud || !req.url?.startsWith('/interno/')) {
+        responder(res, 403, { error: 'No permitido' }, cabeceras);
+        return;
+      }
+      rutaInterna(req, res, req.url.split('?')[0], cabeceras).catch((error) => {
+        console.error('❌ Error en la API interna:', error?.message ?? error);
+        if (!res.headersSent) responder(res, 500, { ok: false }, cabeceras);
+        else res.end();
+      });
+      return;
+    }
+
     try {
       const url = new URL(
         req.url ?? '/',
@@ -148,10 +205,19 @@ export function crearServidorApi(usuarioPorDefecto) {
 
       const parametros = url.searchParams;
 
-      // Esta API sirve al usuario del bot que la inició.
-      // Ignora el parámetro ?usuario= para impedir que se
-      // seleccione otra cuenta desde la URL.
-      const usuario = usuarioPorDefecto;
+      // La cuenta sale SIEMPRE de la sesión web validada por el bot (cabecera X-Sesion), nunca de
+      // un parámetro de la URL ni del cuerpo: ?usuario= o ?telefono= se ignoran.
+      const esPublica = ['/api/salud', '/api/categorias'].includes(url.pathname);
+      let sesion = null;
+      let usuario = null;
+      if (!esPublica) {
+        sesion = acceso.validarSesion(req.headers['x-sesion']);
+        if (!sesion) {
+          responder(res, 401, { error: 'Sesión no válida' }, cabeceras);
+          return;
+        }
+        usuario = sesion.telefono;
+      }
 
       const mes = parametros.get('mes') ?? fechaBogota().slice(0, 7);
 
@@ -167,6 +233,38 @@ export function crearServidorApi(usuarioPorDefecto) {
             { ok: true },
             cabeceras
           );
+          return;
+        }
+
+        // ---------------------------------------------
+        // Quién soy (teléfono enmascarado) y saldo total
+        // ---------------------------------------------
+
+        case '/api/yo': {
+          responder(res, 200, { telefono: enmascarar(sesion.telefono) }, cabeceras);
+          return;
+        }
+
+        case '/api/saldo': {
+          const total = db.resumen(usuario, '0001-01-01', fechaBogota());
+          responder(res, 200, { ingresos: total.ingresos, gastos: total.gastos, balance: total.balance }, cabeceras);
+          return;
+        }
+
+        // ---------------------------------------------
+        // Deudas por persona
+        // ---------------------------------------------
+
+        case '/api/deudas': {
+          const personas = db.resumenDeudas(usuario).map((p) => ({
+            persona: p.persona,
+            saldo: p.saldo,
+            historial: db.historialDeuda(usuario, p.clave, 5),
+          }));
+          responder(res, 200, {
+            total: personas.reduce((suma, p) => suma + Math.max(p.saldo, 0), 0),
+            personas,
+          }, cabeceras);
           return;
         }
 
@@ -425,8 +523,8 @@ export function crearServidorApi(usuarioPorDefecto) {
   return servidor;
 }
 
-export function iniciarApi(usuarioPorDefecto) {
-  const servidor = crearServidorApi(usuarioPorDefecto);
+export function iniciarApi(opciones) {
+  const servidor = crearServidorApi(opciones);
   if (!servidor) return null;
   const puerto = Number(process.env.API_PUERTO ?? 3001);
   const host = process.env.API_HOST ?? '127.0.0.1';

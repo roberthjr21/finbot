@@ -30,6 +30,7 @@ const { pesos, rangoPeriodo, rangoMes, valida } = await import('./fechas.js');
 const { parseMonto, tieneDecimalConPunto } = await import('./montos.js');
 const { acotarAcciones } = await import('./politicas.js');
 const { crearRespaldo, restaurarRespaldo } = await import('./db-admin.js');
+const acceso = await import('./acceso.js');
 
 after(() => {
   db.cerrarBase();
@@ -702,7 +703,12 @@ test('/saldo y ayuda', () => {
 });
 
 test('API para la página: token, resumen, movimientos y presupuestos', async () => {
-  const servidor = crearServidorApi(U);
+  const servidor = crearServidorApi({});
+  // La cuenta sale de la sesión web: se abre una con un código enviado "por WhatsApp"
+  db.asegurarUsuario(U);
+  let codigoEnviado;
+  await acceso.solicitarCodigo({ telefono: U, enviar: async (_tel, texto) => { codigoEnviado = texto.match(/\*(\d{6})\*/)[1]; } });
+  const { token: sesion } = acceso.verificarCodigo({ telefono: U, codigo: codigoEnviado });
   const solicitar = (url, { method = 'GET', headers = {} } = {}) => {
     const req = { method, url, headers };
     const res = {
@@ -713,8 +719,11 @@ test('API para la página: token, resumen, movimientos y presupuestos', async ()
     servidor.emit('request', req, res);
     return { status: res.statusCode, headers: res.headers, json: res.body ? JSON.parse(res.body) : undefined };
   };
-  const con = { headers: { authorization: 'Bearer secreto-de-prueba' } };
+  const con = { headers: { authorization: 'Bearer secreto-de-prueba', 'x-sesion': sesion } };
+  const sinSesion = { headers: { authorization: 'Bearer secreto-de-prueba' } };
 
+  assert.equal(solicitar('/api/resumen?mes=2026-10', sinSesion).status, 401); // el token del servidor no basta
+  assert.equal(solicitar('/api/resumen?mes=2026-10', { headers: { ...sinSesion.headers, 'x-sesion': 'inventada-'.repeat(5) } }).status, 401);
   assert.equal(solicitar('/api/salud').status, 401);
   assert.equal(solicitar('/api/salud', { headers: { authorization: 'Bearer malo' } }).status, 401);
   assert.equal(solicitar('/api/salud', con).status, 200);
@@ -746,6 +755,7 @@ test('API para la página: token, resumen, movimientos y presupuestos', async ()
   const preflight = solicitar('/api/resumen', { method: 'OPTIONS' });
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers['Access-Control-Allow-Origin'], 'http://localhost:3000');
-  assert.equal(solicitar('/api/salud', { method: 'POST', ...con }).status, 405);
+  assert.equal(solicitar('/api/salud', { method: 'PUT', ...con }).status, 405);
+  assert.equal(solicitar('/api/salud', { method: 'POST', ...con }).status, 403); // POST solo en /interno/
   assert.equal(solicitar('/api/salud', { headers: { ...con.headers, origin: 'https://malicioso.example' } }).status, 403);
 });
