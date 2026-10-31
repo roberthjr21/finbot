@@ -11,6 +11,7 @@ export const AYUDA = [
   '• "ponme un presupuesto de 300 mil en comida"',
   '• "cómo van mis gastos" o "en qué estoy fallando"',
   '• "cuánta plata tengo" o "cuánto me queda"',
+  '• "le debo 50 mil a Juan" · "voy a abonar 20 mil a Juan" · "cuánto le debo a Juan"',
   '',
   'O usa comandos (funcionan aunque la IA falle):',
   '/gasto 20000 comida almuerzo',
@@ -22,6 +23,7 @@ export const AYUDA = [
   '/presupuestos',
   '/analisis',
   '/saldo',
+  '/debo 50000 Juan   /abono 20000 Juan   /deudas [persona]',
 ].join('\n');
 
 const PERIODOS = {
@@ -101,6 +103,26 @@ export function interpretarComando(texto) {
     case 'saldo':
       return { acciones: [{ nombre: 'consultar_saldo', datos: {} }] };
 
+    // /debo 50000 Juan   ·   /abono 20000 Juan   ·   /abono todo Juan
+    case 'debo':
+    case 'abono': {
+      const todo = comando === 'abono' && normalizar(resto[0] ?? '') === 'todo';
+      const conUnidad = !todo && resto[0] && /^(mil|lucas|k|millones?|millón|millon)$/iu.test(resto[1] ?? '');
+      const monto = todo ? undefined : parseMonto(conUnidad ? `${resto[0]} ${resto[1]}` : resto[0]);
+      const persona = resto.slice(todo ? 1 : conUnidad ? 2 : 1).join(' ');
+      if ((!todo && !monto) || !persona) {
+        return { respuesta: comando === 'debo' ? 'Usa: /debo 50000 Juan' : 'Usa: /abono 20000 Juan (o /abono todo Juan)' };
+      }
+      return comando === 'debo'
+        ? { acciones: [{ nombre: 'registrar_deuda', datos: { persona, monto } }] }
+        : { acciones: [{ nombre: 'abonar_deuda', datos: todo ? { persona, todo: true } : { persona, monto } }] };
+    }
+
+    // /deudas   ·   /deudas Juan
+    case 'deudas':
+    case 'deuda':
+      return { acciones: [{ nombre: 'consultar_deudas', datos: resto.length ? { persona: resto.join(' ') } : {} }] };
+
     default:
       return null;
   }
@@ -141,6 +163,11 @@ export function atajoSinIA(texto) {
   if (/^(como (van|voy|andan|estan) (mis )?(gastos|finanzas)|en que (estoy fallando|me estoy pasando))( .*)?$/.test(t)) {
     return accion('analizar_gastos');
   }
+
+  // "cuánto debo", "mis deudas", "cuánto le debo a Juan", "a quién le debo"
+  if (/^(cuanto debo( en total)?|mis deudas|a quien le debo|cuanto debo a todos)$/.test(t)) return accion('consultar_deudas');
+  const deudaDe = t.match(/^cuanto (?:le )?debo a ([a-z ]{1,40})$/);
+  if (deudaDe) return accion('consultar_deudas', { persona: deudaDe[1].trim() });
 
   if (/^(mis )?(ultimos|ultimas) (movimientos|gastos)$/.test(t)) return accion('ultimos_movimientos', { cantidad: 5 });
   if (/^(mis )?presupuestos$|^como van mis presupuestos$/.test(t)) return accion('ver_presupuestos');

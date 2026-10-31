@@ -7,6 +7,7 @@ import path from 'node:path';
 import { after } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { Worker } from 'node:worker_threads';
+import { spawnSync } from 'node:child_process';
 
 const temporal = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-financiero-test-'));
 process.env.DB_ARCHIVO = path.join(temporal, 'pruebas.db');
@@ -287,7 +288,7 @@ test('IA simulada: interpreta varias herramientas en un mensaje', async () => {
     assert.equal(r.acciones[1].datos.monto, 12000);
     assert.equal(r.texto, 'Listo, anoté los dos.');
     assert.equal(recibido.cabeceras['x-api-key'], 'clave-falsa');
-    assert.equal(recibido.cuerpo.tools.length, 8);
+    assert.equal(recibido.cuerpo.tools.length, 11);
     assert.match(recibido.cuerpo.system, /consultar_saldo/);
     assert.match(recibido.cuerpo.system, /Mascotas/);
     assert.match(recibido.cuerpo.system, /Hoy es 2026-10-17/);
@@ -560,6 +561,139 @@ test('atajos sin IA para las preguntas más comunes', () => {
   assert.equal(nombre('cuánto me queda de presupuesto'), null);
   assert.equal(nombre('x'.repeat(200)), null);
   assert.equal(nombre(''), null);
+});
+
+test('deudas: anotar, abonar y saber si sigues debiendo o ya pagaste', () => {
+  const D = 'persona-deudas';
+  const run = (nombre, datos, id) => ejecutar({ nombre, datos }, { usuario: D, hoy: HOY, mensajeId: `deuda:${id}`, indice: 0 });
+  const saldo = () => ejecutar({ nombre: 'consultar_saldo', datos: {} }, { usuario: D, hoy: HOY });
+
+  assert.match(run('consultar_deudas', {}, 0), /No tienes deudas anotadas/);
+  assert.match(run('consultar_deudas', { persona: 'Juan' }, 0), /No tengo ninguna deuda anotada con Juan/);
+  assert.match(run('abonar_deuda', { persona: 'Juan', monto: 5000 }, 0), /No tengo ninguna deuda anotada/);
+
+  // Anotar una deuda no cambia el saldo en pesos
+  db.agregarMovimiento({ usuario: D, tipo: 'ingreso', monto: 100000, categoria: 'Salario', descripcion: '', fecha: HOY, mensajeId: 'deuda:ingreso' });
+  assert.match(run('registrar_deuda', { persona: 'Juan Pérez', monto: 11000 }, 1), /le debes \$11\.000 a Juan Pérez/);
+  assert.match(saldo(), /Tu saldo: \$100\.000/);
+  assert.match(saldo(), /Debes en total: \$11\.000/);
+
+  // Ya existe "Juan Pérez": "juan" suma a la misma persona
+  assert.match(run('registrar_deuda', { persona: 'juan', monto: 9000, descripcion: 'almuerzo' }, 2), /En total le debes \$20\.000 a Juan Pérez/);
+
+  // Abono parcial: baja la deuda y sale de tu saldo como gasto en Deudas
+  const abono = run('abonar_deuda', { persona: 'Juan', monto: 5000 }, 3);
+  assert.match(abono, /Abono registrado: \$5\.000 a Juan Pérez/);
+  assert.match(abono, /Sigues debiéndole \$15\.000/);
+  assert.match(saldo(), /Tu saldo: \$95\.000/);
+  assert.match(run('consultar_deudas', { persona: 'JUAN' }, 4), /Sigues debiéndole \$15\.000 a Juan Pérez/);
+  assert.match(run('consultar_deudas', {}, 5), /• Juan Pérez: \$15\.000[\s\S]*Total: \$15\.000/);
+
+  // El mismo mensaje no se registra dos veces
+  assert.equal(run('abonar_deuda', { persona: 'Juan', monto: 5000 }, 3), null);
+  assert.match(run('consultar_deudas', { persona: 'Juan' }, 6), /\$15\.000/);
+
+  // No se puede abonar más de lo que se debe
+  assert.match(run('abonar_deuda', { persona: 'Juan', monto: 99000 }, 7), /Solo le debes \$15\.000/);
+  assert.match(saldo(), /Tu saldo: \$95\.000/);
+
+  // Pagar todo termina la deuda
+  assert.match(run('abonar_deuda', { persona: 'Juan', todo: true }, 8), /Ya pagaste toda la deuda/);
+  assert.match(run('consultar_deudas', { persona: 'Juan' }, 9), /Ya pagaste toda la deuda con Juan Pérez/);
+  assert.match(run('abonar_deuda', { persona: 'Juan', monto: 1000 }, 10), /Ya pagaste toda la deuda/);
+  assert.match(run('consultar_deudas', {}, 11), /No le debes nada a nadie/);
+  assert.doesNotMatch(saldo(), /Debes en total/);
+  assert.match(saldo(), /Tu saldo: \$80\.000/);
+
+  // Datos inválidos y otra persona
+  assert.match(run('registrar_deuda', { persona: '', monto: 1000 }, 12), /Dime a quién le debes/);
+  assert.match(run('registrar_deuda', { persona: 'Ana', monto: -5 }, 13), /Dime a quién le debes/);
+  assert.match(ejecutar({ nombre: 'consultar_deudas', datos: { persona: 'Juan' } }, { usuario: 'otro-sin-deudas', hoy: HOY }), /No tengo ninguna deuda/);
+});
+
+test('deudas: dos personas parecidas piden precisar el nombre', () => {
+  const D = 'persona-ambigua';
+  const run = (nombre, datos, id) => ejecutar({ nombre, datos }, { usuario: D, hoy: HOY, mensajeId: `amb:${id}`, indice: 0 });
+  run('registrar_deuda', { persona: 'Juan Pérez', monto: 1000 }, 1);
+  run('registrar_deuda', { persona: 'Juan López', monto: 2000 }, 2);
+  assert.match(run('abonar_deuda', { persona: 'Juan', monto: 500 }, 3), /¿A cuál te refieres: Juan López o Juan Pérez/);
+  assert.match(run('abonar_deuda', { persona: 'Juan López', monto: 500 }, 4), /Sigues debiéndole \$1\.500/);
+});
+
+test('deudas: /deshacer borra la deuda o el abono más reciente', () => {
+  const D = 'persona-deshacer-deuda';
+  const run = (nombre, datos, id) => ejecutar({ nombre, datos }, { usuario: D, hoy: HOY, mensajeId: `desh:${id}`, indice: 0 });
+  const deshacer = () => {
+    const pregunta = run('deshacer_ultimo', {}, 'x');
+    return { pregunta, resultado: run('confirmar_deshacer', {}, 'y') };
+  };
+  const debe = () => run('consultar_deudas', { persona: 'Ana' }, 'q');
+
+  db.agregarMovimiento({ usuario: D, tipo: 'gasto', monto: 3000, categoria: 'Comida', descripcion: '', fecha: HOY, mensajeId: 'desh:gasto' });
+  run('registrar_deuda', { persona: 'Ana', monto: 10000 }, 1);
+  run('abonar_deuda', { persona: 'Ana', monto: 4000 }, 2);
+  assert.match(debe(), /Sigues debiéndole \$6\.000/);
+
+  // Lo más reciente es el abono: se borra el abono (y su gasto)
+  let r = deshacer();
+  assert.match(r.pregunta, /borrar este movimiento[\s\S]*Abono a Ana/);
+  assert.match(debe(), /Sigues debiéndole \$10\.000/);
+
+  // Ahora lo más reciente es la deuda (no el gasto de Comida, que es anterior)
+  r = deshacer();
+  assert.match(r.pregunta, /borrar esta deuda[\s\S]*\$10\.000 a Ana/);
+  assert.match(r.resultado, /Borré la deuda confirmada/);
+  assert.match(debe(), /No tengo ninguna deuda anotada con Ana/);
+
+  // Y por último el gasto
+  r = deshacer();
+  assert.match(r.pregunta, /borrar este movimiento[\s\S]*Comida/);
+});
+
+test('deudas: una deuda con abonos no se borra si quedaría negativa', () => {
+  const D = 'persona-deuda-bloqueada';
+  const run = (nombre, datos, id) => ejecutar({ nombre, datos }, { usuario: D, hoy: HOY, mensajeId: `blq:${id}`, indice: 0 });
+  run('registrar_deuda', { persona: 'Luis', monto: 10000 }, 1);
+  run('abonar_deuda', { persona: 'Luis', monto: 10000 }, 2);
+  const fila = db.ultimaDeudaBorrable(D);
+  assert.deepEqual(db.borrarDeuda(D, fila.id), { bloqueada: true });
+  assert.match(run('consultar_deudas', { persona: 'Luis' }, 3), /Ya pagaste toda la deuda/);
+});
+
+test('deudas: comandos y atajos sin IA', () => {
+  assert.deepEqual(interpretarComando('/debo 50000 Juan Pérez'), { acciones: [{ nombre: 'registrar_deuda', datos: { persona: 'Juan Pérez', monto: 50000 } }] });
+  assert.deepEqual(interpretarComando('/debo 11 mil Ana'), { acciones: [{ nombre: 'registrar_deuda', datos: { persona: 'Ana', monto: 11000 } }] });
+  assert.deepEqual(interpretarComando('/abono 20000 Juan'), { acciones: [{ nombre: 'abonar_deuda', datos: { persona: 'Juan', monto: 20000 } }] });
+  assert.deepEqual(interpretarComando('/abono todo Juan'), { acciones: [{ nombre: 'abonar_deuda', datos: { persona: 'Juan', todo: true } }] });
+  assert.deepEqual(interpretarComando('/deudas'), { acciones: [{ nombre: 'consultar_deudas', datos: {} }] });
+  assert.deepEqual(interpretarComando('/deudas Juan'), { acciones: [{ nombre: 'consultar_deudas', datos: { persona: 'Juan' } }] });
+  assert.match(interpretarComando('/debo Juan').respuesta, /Usa: \/debo/);
+  assert.match(interpretarComando('/abono 5000').respuesta, /Usa: \/abono/);
+
+  assert.deepEqual(atajoSinIA('¿Cuánto debo?'), { acciones: [{ nombre: 'consultar_deudas', datos: {} }] });
+  assert.deepEqual(atajoSinIA('cuánto le debo a Juan'), { acciones: [{ nombre: 'consultar_deudas', datos: { persona: 'juan' } }] });
+  assert.match(AYUDA, /\/debo/);
+});
+
+test('deudas: una base antigua sin la tabla se actualiza sola y conserva sus datos', () => {
+  const archivo = path.join(temporal, 'antigua.db');
+  const vieja = new DatabaseSync(archivo);
+  vieja.exec(`
+    CREATE TABLE movimientos (id INTEGER PRIMARY KEY AUTOINCREMENT, usuario TEXT NOT NULL, tipo TEXT NOT NULL, monto INTEGER NOT NULL,
+      categoria TEXT NOT NULL, descripcion TEXT NOT NULL DEFAULT '', fecha TEXT NOT NULL, creado TEXT NOT NULL DEFAULT (datetime('now')), mensaje_id TEXT UNIQUE);
+    INSERT INTO movimientos (usuario, tipo, monto, categoria, fecha) VALUES ('u', 'gasto', 1234, 'Comida', '2026-10-01');
+  `);
+  vieja.close();
+  const salida = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    const db = await import('./db.js');
+    db.agregarDeuda({ usuario: 'u', persona: 'Ana', tipo: 'debo', monto: 500, fecha: '2026-10-01' });
+    console.log(JSON.stringify({ movs: db.listarMovimientos({ usuario: 'u', limite: 5 }).length, deudas: db.resumenDeudas('u') }));
+    db.cerrarBase();
+  `], { cwd: import.meta.dirname, env: { ...process.env, DB_ARCHIVO: archivo }, encoding: 'utf8' });
+  assert.equal(salida.status, 0, salida.stderr);
+  const r = JSON.parse(salida.stdout.trim().split('\n').pop());
+  assert.equal(r.movs, 1);
+  assert.deepEqual(r.deudas.map((d) => [d.persona, d.saldo]), [['Ana', 500]]);
 });
 
 test('/saldo y ayuda', () => {
