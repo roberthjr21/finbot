@@ -13,13 +13,15 @@ process.env.DB_ARCHIVO = path.join(temporal, 'pruebas.db');
 process.env.API_TOKEN = 'secreto-de-prueba';
 process.env.API_PUERTO = '0';
 process.env.ANTHROPIC_API_KEY = 'clave-falsa';
-for (const variable of ['GEMINI_API_KEY', 'GEMINI_URL', 'ANTHROPIC_URL', 'MODELO_IA', 'MODELO_GEMINI', 'MODELO_ANTHROPIC']) {
+process.env.ESPERA_REINTENTO_MS = '0'; // sin pausas entre reintentos para que las pruebas sean rápidas
+for (const variable of ['GEMINI_API_KEY', 'GEMINI_URL', 'ANTHROPIC_URL', 'MODELO_IA', 'MODELO_GEMINI', 'MODELO_ANTHROPIC', 'MODELO_RESPALDO']) {
   delete process.env[variable];
 }
 
 const db = await import('./db.js');
 const { ejecutar } = await import('./acciones.js');
-const { interpretarComando, AYUDA } = await import('./comandos.js');
+const { interpretarComando, atajoSinIA, AYUDA } = await import('./comandos.js');
+const { CATEGORIAS } = await import('./categorias.js');
 const { interpretar, analizarConIA } = await import('./ia.js');
 const { datosAnalisis, responderAnalisis } = await import('./analisis.js');
 const { crearServidorApi } = await import('./api.js');
@@ -285,7 +287,9 @@ test('IA simulada: interpreta varias herramientas en un mensaje', async () => {
     assert.equal(r.acciones[1].datos.monto, 12000);
     assert.equal(r.texto, 'Listo, anoté los dos.');
     assert.equal(recibido.cabeceras['x-api-key'], 'clave-falsa');
-    assert.equal(recibido.cuerpo.tools.length, 7);
+    assert.equal(recibido.cuerpo.tools.length, 8);
+    assert.match(recibido.cuerpo.system, /consultar_saldo/);
+    assert.match(recibido.cuerpo.system, /Mascotas/);
     assert.match(recibido.cuerpo.system, /Hoy es 2026-10-17/);
     assert.equal(typeof interpretar, 'function');
   } finally {
@@ -434,6 +438,133 @@ test('/analisis y la acción analizar_gastos', () => {
   assert.equal(interpretarComando('/analizar').acciones[0].nombre, 'analizar_gastos');
   assert.equal(ejecutar({ nombre: 'analizar_gastos', datos: {} }, { usuario: U, hoy: HOY }), null);
   assert.match(AYUDA, /\/analisis/);
+});
+
+// --- Mejoras de IA: reintentos, modelo de respaldo, saldo y atajos ---
+const respuestaGemini = (estado, cuerpo) =>
+  new Response(JSON.stringify(cuerpo), { status: estado, headers: { 'content-type': 'application/json' } });
+const gastoGemini = {
+  candidates: [{ content: { parts: [{ functionCall: { name: 'registrar_movimiento', args: { tipo: 'gasto', monto: 1500, categoria: 'Comida' } } }] } }],
+};
+
+// Ejecuta `tarea` con un Gemini falso. `manejador(modelo)` decide qué responde cada modelo;
+// `tarea` recibe la lista de modelos que se llamaron, en orden.
+async function conGeminiFalso(manejador, tarea) {
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  const llamadas = [];
+  process.env.GEMINI_API_KEY = 'clave-falsa-gemini';
+  process.env.MODELO_GEMINI = 'principal';
+  process.env.MODELO_RESPALDO = 'respaldo';
+  globalThis.fetch = async (url) => {
+    const modelo = String(url).match(/models\/([^:]+):/)[1];
+    llamadas.push(modelo);
+    return manejador(modelo);
+  };
+  console.warn = () => {};
+  try {
+    return await tarea(llamadas);
+  } finally {
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.MODELO_GEMINI;
+    delete process.env.MODELO_RESPALDO;
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+  }
+}
+
+test('Gemini: si el modelo principal está saturado, reintenta y usa el de respaldo', () =>
+  conGeminiFalso(
+    (modelo) => (modelo === 'principal' ? respuestaGemini(503, { error: 'saturado' }) : respuestaGemini(200, gastoGemini)),
+    async (llamadas) => {
+      const r = await interpretar('gasté 1500 en una gaseosa', HOY);
+      assert.equal(r.acciones[0].datos.monto, 1500);
+      assert.deepEqual(llamadas, ['principal', 'principal', 'respaldo']);
+    },
+  ));
+
+test('Gemini: un modelo retirado (404) pasa directo al de respaldo, sin reintentar', () =>
+  conGeminiFalso(
+    (modelo) => (modelo === 'principal' ? respuestaGemini(404, { error: 'ya no existe' }) : respuestaGemini(200, gastoGemini)),
+    async (llamadas) => {
+      const r = await interpretar('gasté 1500', HOY);
+      assert.equal(r.acciones[0].datos.monto, 1500);
+      assert.deepEqual(llamadas, ['principal', 'respaldo']);
+    },
+  ));
+
+test('Gemini: un error de clave (401) no se reintenta ni cambia de modelo', () =>
+  conGeminiFalso(
+    () => respuestaGemini(401, { error: 'clave inválida' }),
+    async (llamadas) => {
+      await assert.rejects(() => interpretar('hola', HOY), /API 401/);
+      assert.deepEqual(llamadas, ['principal']);
+    },
+  ));
+
+test('Gemini: si todo se queda sin responder, el error dice que fue por tiempo', () =>
+  conGeminiFalso(
+    () => { throw new DOMException('The operation was aborted due to timeout', 'TimeoutError'); },
+    async (llamadas) => {
+      await assert.rejects(() => interpretar('hola', HOY), /no respondió a tiempo/);
+      assert.deepEqual(llamadas, ['principal', 'principal', 'respaldo']);
+    },
+  ));
+
+test('Gemini: sin MODELO_RESPALDO solo se usa el principal', async () => {
+  await conGeminiFalso(
+    () => respuestaGemini(503, { error: 'saturado' }),
+    async (llamadas) => {
+      process.env.MODELO_RESPALDO = '';
+      await assert.rejects(() => interpretar('hola', HOY), /API 503/);
+      assert.deepEqual(llamadas, ['principal', 'principal']);
+    },
+  );
+});
+
+test('categoría Mascotas disponible', () => {
+  assert.ok(CATEGORIAS.includes('Mascotas'));
+  assert.match(reg({ tipo: 'gasto', monto: 2000, categoria: 'Mascotas', descripcion: 'comida de gatos' }, 0, 'masc1'), /Mascotas/);
+});
+
+test('saldo: suma todo lo registrado, sin límite de mes', () => {
+  const P = 'persona-saldo';
+  const m = (tipo, monto, fecha, id) =>
+    db.agregarMovimiento({ usuario: P, tipo, monto, categoria: 'Otros', descripcion: '', fecha, mensajeId: `saldo:${id}` });
+  const consultar = () => ejecutar({ nombre: 'consultar_saldo', datos: {} }, { usuario: P, hoy: HOY });
+
+  assert.match(consultar(), /Todavía no tienes movimientos/);
+  m('ingreso', 100000, '2026-09-10', 1); // mes pasado: cuenta en el saldo, no en "este mes"
+  m('gasto', 30000, '2026-10-05', 2);
+  const texto = consultar();
+  assert.match(texto, /Tu saldo: \$70\.000/);
+  assert.match(texto, /Este mes: -\$30\.000/);
+  assert.match(ejecutar({ nombre: 'consultar_saldo', datos: {} }, { usuario: 'otra-persona-saldo', hoy: HOY }), /Todavía no tienes movimientos/);
+});
+
+test('atajos sin IA para las preguntas más comunes', () => {
+  const nombre = (t) => atajoSinIA(t)?.acciones[0].nombre ?? null;
+  assert.equal(nombre('Cuánta plata tengo ?'), 'consultar_saldo');
+  assert.equal(nombre('cuánto me queda'), 'consultar_saldo');
+  assert.equal(nombre('Mi saldo'), 'consultar_saldo');
+  assert.equal(nombre('¿cuánto gasté esta semana?'), 'consultar_resumen');
+  assert.deepEqual(atajoSinIA('cuánto gasté en comida este mes').acciones[0].datos, { periodo: 'mes', categoria: 'Comida' });
+  assert.equal(atajoSinIA('cuanto gaste hoy').acciones[0].datos.periodo, 'hoy');
+  assert.equal(nombre('cómo van mis gastos'), 'analizar_gastos');
+  assert.equal(nombre('en qué estoy fallando'), 'analizar_gastos');
+  assert.equal(nombre('mis últimos movimientos'), 'ultimos_movimientos');
+  assert.equal(nombre('mis presupuestos'), 'ver_presupuestos');
+  // No debe confundir un registro o un mensaje largo con una pregunta
+  assert.equal(nombre('me quedan 20 mil de saldo'), null);
+  assert.equal(nombre('compré aceite por 20 mil'), null);
+  assert.equal(nombre('cuánto me queda de presupuesto'), null);
+  assert.equal(nombre('x'.repeat(200)), null);
+  assert.equal(nombre(''), null);
+});
+
+test('/saldo y ayuda', () => {
+  assert.deepEqual(interpretarComando('/saldo'), { acciones: [{ nombre: 'consultar_saldo', datos: {} }] });
+  assert.match(AYUDA, /\/saldo/);
 });
 
 test('API para la página: token, resumen, movimientos y presupuestos', async () => {

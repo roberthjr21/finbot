@@ -33,6 +33,12 @@ modelos distintos. `MODELO_IA` sigue aceptándose por compatibilidad. También e
 `DEBUG`, `MODO_AUTOCHAT`, `ESPERA_RECONEXION_MS`, `API_HOST`, `API_PUERTO`, `ORIGEN_PERMITIDO`,
 `DB_ARCHIVO`, `GEMINI_URL` y `ANTHROPIC_URL`.
 
+Si Gemini falla (saturado, modelo retirado o sin responder), el bot reintenta una vez y después
+prueba `MODELO_RESPALDO` (por defecto `gemini-flash-lite-latest`; déjalo vacío para desactivarlo).
+`TIEMPO_IA_MS` (15000) y `ESPERA_REINTENTO_MS` (1500) ajustan la espera por intento y entre
+intentos. Si la IA no responde, las preguntas comunes ("cuánta plata tengo", "cuánto gasté hoy",
+"cómo van mis gastos") se resuelven igual, sin IA.
+
 ## Primera ejecución (para vincular WhatsApp)
 ```bash
 npm test         # opcional: comprueba que todo está bien (no usa WhatsApp ni internet)
@@ -75,6 +81,8 @@ Texto libre (necesita la clave de IA):
 - "compré aceite por 20 mil" · "me pagaron 1,5 millones" · "ayer gasté 8 lucas en bus"
 - "cuánto gasté esta semana" · "qué gasté en comida este mes"
 - "ponme un presupuesto de 300 mil en comida" · "me equivoqué, borra lo último"
+- "cuánta plata tengo" · "cuánto me queda" (tu saldo total: todo lo que has registrado, sin límite
+  de mes; si tenías plata antes de empezar, anótala como ingreso)
 - "cómo van mis gastos" · "en qué estoy fallando" (compara este mes con el mismo tramo del mes pasado,
   revisa tus presupuestos y te da observaciones concretas)
 - "¿cómo empiezo a ahorrar?" (respuestas generales, no es asesoría financiera)
@@ -86,10 +94,13 @@ Comandos (funcionan siempre, también sin IA):
 /resumen [hoy|semana|mes|mes_pasado|anio]
 /ultimos [cantidad]    /deshacer
 /presupuesto comida 300000          /presupuestos
-/analisis
+/analisis                           /saldo
 ```
 Categorías (editables en `categorias.js`): Comida, Transporte, Servicios, Estudio, Salud, Ocio,
-Hogar, Ropa, Deudas, Ahorro, Salario, Ventas, Otros.
+Hogar, Mascotas, Ropa, Deudas, Ahorro, Salario, Ventas, Otros.
+
+Deudas: si dices que *debes* algo sin decir que ya lo pagaste, el bot pregunta antes de registrar
+un gasto. Cuando dices "pagué…", lo registra en Deudas.
 
 ## API para tu página
 Solo lectura, con token. Por defecto escucha en `127.0.0.1:3001` y acepta peticiones desde
