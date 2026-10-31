@@ -12,7 +12,7 @@ import pino from 'pino';
 import * as db from './db.js';
 import { fechaBogota } from './fechas.js';
 import { hayIA, interpretar, nombreProveedor } from './ia.js';
-import { interpretarComando } from './comandos.js';
+import { interpretarComando, atajoSinIA } from './comandos.js';
 import { ejecutar } from './acciones.js';
 import { responderAnalisis } from './analisis.js';
 import { iniciarApi } from './api.js';
@@ -255,6 +255,7 @@ async function atender(sock, jid, msg, usuario, texto) {
     : fechaBogota();
 
   let acciones = [];
+  let iaFallo = false;
   const respuestas = [];
 
   try {
@@ -278,6 +279,8 @@ async function atender(sock, jid, msg, usuario, texto) {
       if (r.texto) {
         respuestas.push(r.texto);
       }
+    } else if (atajoSinIA(texto)) {
+      acciones = atajoSinIA(texto).acciones;
     } else {
       respuestas.push(
         'La IA no está configurada todavía. Mientras tanto usa comandos, por ejemplo:\n' +
@@ -291,11 +294,19 @@ async function atender(sock, jid, msg, usuario, texto) {
       e.message
     );
 
-    respuestas.push(
-      '😕 No pude entender el mensaje ahora mismo. ' +
-      'Intenta de nuevo o usa un comando, por ejemplo:\n' +
-      '/gasto 20000 comida almuerzo'
-    );
+    // Si la IA falló, las preguntas comunes se resuelven con un atajo sin IA.
+    const atajo = texto.startsWith('/') ? null : atajoSinIA(texto);
+    if (atajo) {
+      acciones = atajo.acciones;
+      iaFallo = true;
+      respuestas.push('ℹ️ La IA no respondió a tiempo, pero esto lo pude resolver sin ella:');
+    } else {
+      respuestas.push(
+        '😕 La IA no respondió ahora mismo. ' +
+        'Intenta de nuevo en un momento o usa un comando, por ejemplo:\n' +
+        '/gasto 20000 comida almuerzo'
+      );
+    }
   }
 
   if (
@@ -337,7 +348,8 @@ async function atender(sock, jid, msg, usuario, texto) {
   // El análisis de gastos solo lee datos y llama a la IA, así que va fuera de la transacción.
   if (completado && acotadas.some((accion) => accion?.nombre === 'analizar_gastos')) {
     try {
-      respuestas.push(await responderAnalisis(usuario, hoy));
+      // Si la IA acaba de fallar, el análisis se calcula directo, sin esperar otra vez a la IA.
+      respuestas.push(await responderAnalisis(usuario, hoy, iaFallo ? { generar: null } : undefined));
     } catch (error) {
       console.error('No se pudo analizar los gastos:', error.message);
       respuestas.push('⚠️ No pude analizar tus gastos ahora mismo. Intenta de nuevo en un momento.');

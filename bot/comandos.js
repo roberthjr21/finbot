@@ -1,4 +1,4 @@
-import { buscarCategoria, normalizar } from './categorias.js';
+import { buscarCategoria, normalizar, CATEGORIAS } from './categorias.js';
 import { parseMonto } from './montos.js';
 
 export const AYUDA = [
@@ -10,6 +10,7 @@ export const AYUDA = [
   '• "cuánto gasté esta semana"',
   '• "ponme un presupuesto de 300 mil en comida"',
   '• "cómo van mis gastos" o "en qué estoy fallando"',
+  '• "cuánta plata tengo" o "cuánto me queda"',
   '',
   'O usa comandos (funcionan aunque la IA falle):',
   '/gasto 20000 comida almuerzo',
@@ -20,6 +21,7 @@ export const AYUDA = [
   '/presupuesto comida 300000',
   '/presupuestos',
   '/analisis',
+  '/saldo',
 ].join('\n');
 
 const PERIODOS = {
@@ -96,7 +98,52 @@ export function interpretarComando(texto) {
     case 'analizar':
       return { acciones: [{ nombre: 'analizar_gastos', datos: {} }] };
 
+    case 'saldo':
+      return { acciones: [{ nombre: 'consultar_saldo', datos: {} }] };
+
     default:
       return null;
   }
+}
+
+// Atajos para las preguntas más comunes, para cuando la IA no responde o no está configurada.
+// Solo reconoce frases cortas y claras; devuelve { acciones } o null si no la reconoce.
+const PERIODOS_ATAJO = [
+  [/\bhoy\b/, 'hoy'],
+  [/\bsemana\b/, 'semana'],
+  [/\bmes pasado\b/, 'mes_pasado'],
+  [/\b(ano|anio)\b/, 'anio'],
+];
+
+export function atajoSinIA(texto) {
+  const t = normalizar(texto).replace(/[¿?¡!.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t || t.length > 80) return null; // los mensajes largos son mejor para la IA
+  const accion = (nombre, datos = {}) => ({ acciones: [{ nombre, datos }] });
+
+  // "cuánta plata tengo", "cuánto me queda", "mi saldo"
+  if (
+    /^(mi )?saldo$/.test(t) ||
+    /^cual es mi saldo$/.test(t) ||
+    /^(cuanta plata|cuanto dinero|cuanto)( .+)? (tengo|me queda|me sobra)$/.test(t)
+  ) {
+    return accion('consultar_saldo');
+  }
+
+  // "cuánto gasté esta semana", "cuánto gasté en comida"
+  if (/^cuanto (he |llevo )?(gaste|gastado|gasto)\b/.test(t)) {
+    const datos = { periodo: PERIODOS_ATAJO.find(([re]) => re.test(t))?.[1] ?? 'mes' };
+    const categoria = CATEGORIAS.find((c) => t.includes(normalizar(c)));
+    if (categoria) datos.categoria = categoria;
+    return accion('consultar_resumen', datos);
+  }
+
+  // "cómo van mis gastos", "en qué estoy fallando"
+  if (/^(como (van|voy|andan|estan) (mis )?(gastos|finanzas)|en que (estoy fallando|me estoy pasando))( .*)?$/.test(t)) {
+    return accion('analizar_gastos');
+  }
+
+  if (/^(mis )?(ultimos|ultimas) (movimientos|gastos)$/.test(t)) return accion('ultimos_movimientos', { cantidad: 5 });
+  if (/^(mis )?presupuestos$|^como van mis presupuestos$/.test(t)) return accion('ver_presupuestos');
+
+  return null;
 }

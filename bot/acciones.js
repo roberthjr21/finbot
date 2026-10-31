@@ -132,6 +132,21 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       return lineas.join('\n');
     }
 
+    // Saldo total: todo lo registrado desde el principio, sin límite de mes
+    case 'consultar_saldo': {
+      const total = db.resumen(usuario, '0001-01-01', hoy);
+      if (total.ingresos === 0 && total.gastos === 0) return 'Todavía no tienes movimientos registrados.';
+      const { desde } = rangoMes(hoy.slice(0, 7));
+      const mes = db.resumen(usuario, desde, hoy);
+      return [
+        `💼 Tu saldo: ${pesos(total.balance)}`,
+        `(ingresos ${pesos(total.ingresos)} − gastos ${pesos(total.gastos)}, desde que empezaste a registrar)`,
+        `📅 Este mes: ${pesos(mes.balance)}`,
+        '',
+        'Ojo: solo cuenta lo que has registrado. Si tenías plata antes de empezar, anótala como ingreso.',
+      ].join('\n');
+    }
+
     // El análisis llama a la IA (asíncrono), así que no puede correr dentro de la
     // transacción: bot.js lo atiende justo después, con responderAnalisis().
     case 'analizar_gastos':
