@@ -1,6 +1,38 @@
 import { buscarCategoria, normalizar, CATEGORIAS } from './categorias.js';
 import { parseMonto } from './montos.js';
 
+export const GUIA = [
+  '📖 *Guía rápida de FinBot*',
+  '',
+  '1️⃣ *Anota lo que gastas o ganas* (escríbelo como hablas)',
+  '• "gasté 15 mil en almuerzo"',
+  '• "compré aceite por 20 mil"',
+  '• "me pagaron 1,5 millones"',
+  '• "ayer gasté 8 lucas en bus"',
+  '',
+  '2️⃣ *Mira cómo vas*',
+  '• "cuánta plata tengo"',
+  '• "cuánto gasté esta semana"',
+  '• "qué gasté en comida este mes"',
+  '• "cómo van mis gastos" (te digo en qué estás fallando)',
+  '',
+  '3️⃣ *Controla con presupuestos*',
+  '• "ponme un presupuesto de 300 mil en comida"',
+  '• "cómo van mis presupuestos"',
+  '',
+  '4️⃣ *Deudas*',
+  '• "le debo 50 mil a Juan"',
+  '• "voy a abonar 20 mil a Juan"',
+  '• "cuánto le debo a Juan"',
+  '',
+  '5️⃣ *Si te equivocas*',
+  '• "borra lo último" (antes te pido confirmación)',
+  '• "/borrar todos mis ingresos" para empezar de cero esa parte',
+  '',
+  '💡 Solo hablo de tus finanzas personales y solo tú ves tus datos. También puedes verlos en la página web de FinBot entrando con un código que te llega por aquí.',
+  'Para ver todos los comandos escribe /ayuda.',
+].join('\n');
+
 export const AYUDA = [
   '🤖 *Tu ayudante financiero*',
   '',
@@ -23,6 +55,7 @@ export const AYUDA = [
   '/presupuestos',
   '/analisis',
   '/saldo   (con /saldo detalle ves las cuentas)',
+  '/guia   (guía paso a paso con ejemplos)',
   '/debo 50000 Juan   /abono 20000 Juan   /deudas [persona]',
   '/borrar ingresos | gastos | deudas | presupuestos | todo   (pide confirmación)',
 ].join('\n');
@@ -58,6 +91,13 @@ export function interpretarComando(texto) {
     case 'ayuda':
     case 'help':
       return { respuesta: AYUDA };
+
+    case 'guia':
+    case 'empezar':
+    case 'start':
+    case 'ejemplos':
+    case 'tutorial':
+      return { respuesta: GUIA };
 
     case 'gasto':
     case 'ingreso': {
@@ -160,6 +200,14 @@ const PERIODOS_ATAJO = [
   [/\bmes pasado\b/, 'mes_pasado'],
   [/\b(ano|anio)\b/, 'anio'],
 ];
+
+// "cómo funciona", "qué puedes hacer", "guía"...: se responde sin gastar IA. Solo frases cortas y claras.
+export function pideGuia(texto) {
+  const t = normalizar(texto).replace(/[¿?¡!.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t || t.length > 50) return false;
+  return /^(hola )?(una |la |mi )?(guia|tutorial|instrucciones|ejemplos)( de uso| rapida| paso a paso)?$/.test(t) ||
+    /^(como (funcionas|funciona|te uso|se usa|empiezo|empezar|uso el bot|uso esto)( esto| el bot)?|que (puedes|sabes|haces) hacer|que haces|para que sirves|ayuda|ayudame|empezar|no se que hacer|como te hablo)$/.test(t);
+}
 
 export function atajoSinIA(texto) {
   const t = normalizar(texto).replace(/[¿?¡!.,;:]/g, ' ').replace(/\s+/g, ' ').trim();

@@ -21,7 +21,7 @@ for (const variable of ['GEMINI_API_KEY', 'GEMINI_URL', 'ANTHROPIC_URL', 'MODELO
 
 const db = await import('./db.js');
 const { ejecutar } = await import('./acciones.js');
-const { interpretarComando, atajoSinIA, AYUDA, alcanceDeBorrado } = await import('./comandos.js');
+const { interpretarComando, atajoSinIA, AYUDA, GUIA, pideGuia, alcanceDeBorrado } = await import('./comandos.js');
 const { CATEGORIAS } = await import('./categorias.js');
 const { interpretar, analizarConIA } = await import('./ia.js');
 const { datosAnalisis, responderAnalisis } = await import('./analisis.js');
@@ -788,6 +788,17 @@ test('/borrar: comandos, frases sin barra y la IA nunca confirma sola', () => {
   const desdeIA = [{ nombre: 'borrar_datos', datos: { alcance: 'todo' } }, { nombre: 'confirmar_borrado' }, { nombre: 'confirmar_deshacer' }, { nombre: 'cancelar_borrado' }];
   assert.deepEqual(sinConfirmaciones(desdeIA).map((a) => a.nombre), ['borrar_datos']);
   assert.match(AYUDA, /\/borrar/);
+});
+
+test('guía para personas nuevas: /guia y frases comunes, sin IA', () => {
+  for (const c of ['/guia', '/guía', '/empezar', '/ejemplos', '/tutorial']) assert.equal(interpretarComando(c).respuesta, GUIA);
+  for (const f of ['guía', 'Cómo funciona?', 'qué puedes hacer', 'como te uso', 'ayuda', 'Empezar', 'no sé qué hacer', 'para qué sirves']) assert.equal(pideGuia(f), true, f);
+  // frases de finanzas o largas no se confunden con la guía
+  for (const f of ['gasté 15 mil en almuerzo', 'cómo van mis gastos', 'cuánta plata tengo', 'ayuda con mi presupuesto de comida este mes por favor']) assert.equal(pideGuia(f), false, f);
+  assert.match(GUIA, /gasté 15 mil en almuerzo/);
+  assert.match(GUIA, /cuánto le debo a Juan/);
+  assert.ok(GUIA.length < 1800); // cabe cómodo en un mensaje de WhatsApp
+  assert.match(AYUDA, /\/guia/);
 });
 
 test('/saldo y ayuda', () => {
