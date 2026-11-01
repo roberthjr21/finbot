@@ -97,6 +97,7 @@ Comandos (funcionan siempre, también sin IA):
 /presupuesto comida 300000          /presupuestos
 /analisis                           /saldo
 /debo 50000 Juan   /abono 20000 Juan   /deudas [persona]
+/borrar ingresos | gastos | deudas | presupuestos | todo
 ```
 Categorías (editables en `categorias.js`): Comida, Transporte, Servicios, Estudio, Salud, Ocio,
 Hogar, Mascotas, Ropa, Deudas, Ahorro, Salario, Ventas, Otros.
@@ -137,6 +138,11 @@ Variables nuevas (todas opcionales):
 **Migración.** Al arrancar con una base anterior, el bot primero hace una copia verificada de `finanzas.db` (junto a ella, con nombre `finanzas.db.antes-multiusuario-FECHA.db`) y luego crea la tabla `usuarios` (id interno estable + número de WhatsApp único, que usan las sesiones web) y una cuenta por cada número que ya tenía datos. Las tablas de datos siguen ligadas por ese número de WhatsApp (columna `usuario`), así que tus datos actuales quedan en tu cuenta sin reasignar ni adivinar ningún dueño. Si la copia falla, el bot no arranca.
 
 **Inicio de sesión web.** El API del bot tiene rutas internas `POST /interno/codigo`, `/interno/verificar` y `/interno/salir` (solo con `API_TOKEN`, pensadas para el servidor de la web). El código se envía por la misma sesión de WhatsApp del bot, solo al número de una cuenta existente, y se guarda con hash; caduca en 5 minutos, es de un solo uso, con máximo 5 intentos y límites por número y por IP. Las rutas de datos (`/api/resumen`, `/api/movimientos`, `/api/presupuestos`, `/api/saldo`, `/api/deudas`, `/api/yo`) exigen además la cabecera `X-Sesion` y la cuenta se deriva de esa sesión. Las sesiones duran 7 días y se pueden revocar (cerrar sesión).
+
+## Borrar datos en bloque
+`/borrar todos mis ingresos` (o `/borrar gastos`, `/borrar deudas`, `/borrar presupuestos`, `/borrar movimientos`, `/borrar todo`) y también frases como "borra todos mis ingresos" o "quiero empezar de cero".
+
+Es un borrado real y sin vuelta atrás, así que funciona en dos pasos: primero el bot dice cuánto va a borrar y no toca nada; solo se borra cuando escribes `/borrar confirmar` en los siguientes 2 minutos (`/borrar cancelar` lo anula). **La IA nunca puede confirmar**: la confirmación solo vale si la escribes tú como comando. Solo afecta a tu cuenta, nunca a la de otras personas. Al borrar gastos también se deshacen los abonos de deuda que ellos respaldaban. Haz antes un respaldo si dudas (sección "Respaldo y restauración").
 
 ## API para tu página
 Solo lectura, con token. Por defecto escucha en `127.0.0.1:3001` y acepta peticiones desde

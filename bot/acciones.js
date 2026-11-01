@@ -5,6 +5,25 @@ import { montoValido } from './montos.js';
 
 const confirmacionesBorrado = new Map();
 const CONFIRMACION_MS = 2 * 60 * 1000;
+// Borrados masivos pendientes de confirmar (uno por persona). Solo se confirman con el comando /borrar confirmar.
+const borradosPendientes = new Map();
+
+const NOMBRE_ALCANCE = {
+  todo: 'TODOS tus datos (movimientos, deudas y presupuestos)',
+  movimientos: 'todos tus movimientos (ingresos y gastos)',
+  ingresos: 'todos tus ingresos',
+  gastos: 'todos tus gastos',
+  deudas: 'toda tu libreta de deudas',
+  presupuestos: 'todos tus presupuestos',
+};
+
+function resumenBorrado(c) {
+  const partes = [];
+  if (c.movimientos) partes.push(`${c.movimientos} movimiento${c.movimientos === 1 ? '' : 's'}`);
+  if (c.deudas) partes.push(`${c.deudas} registro${c.deudas === 1 ? '' : 's'} de deudas`);
+  if (c.presupuestos) partes.push(`${c.presupuestos} presupuesto${c.presupuestos === 1 ? '' : 's'}`);
+  return partes.join(', ');
+}
 
 // Aviso cuando un gasto se acerca o pasa el presupuesto mensual de su categoría
 function alertaPresupuesto(usuario, categoria, fecha) {
@@ -172,6 +191,38 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
         lineas.push(`• ${p.categoria}: ${pesos(gastado)} de ${pesos(p.limite)} (${Math.round((gastado / p.limite) * 100)}%)`);
       }
       return lineas.join('\n');
+    }
+
+    // "/borrar todos mis ingresos": primero pide confirmación; no borra nada todavía.
+    case 'borrar_datos': {
+      const alcance = datos.alcance;
+      if (!db.ALCANCES_BORRADO.includes(alcance)) {
+        return '⚠️ Dime qué borrar: /borrar ingresos, /borrar gastos, /borrar deudas, /borrar presupuestos o /borrar todo.';
+      }
+      const cantidades = db.contarBorrado(usuario, alcance);
+      if (!resumenBorrado(cantidades)) return `No tienes nada que borrar en ${NOMBRE_ALCANCE[alcance]}.`;
+      diferir(() => borradosPendientes.set(usuario, { alcance, vence: Date.now() + CONFIRMACION_MS }));
+      return [
+        `⚠️ Vas a borrar PARA SIEMPRE ${NOMBRE_ALCANCE[alcance]}:`,
+        resumenBorrado(cantidades),
+        '',
+        'Esto no se puede deshacer. Para confirmar escribe /borrar confirmar (tienes 2 minutos). Para cancelar: /borrar cancelar.',
+      ].join('\n');
+    }
+
+    case 'confirmar_borrado': {
+      const pendiente = borradosPendientes.get(usuario);
+      diferir(() => borradosPendientes.delete(usuario));
+      if (!pendiente || pendiente.vence < Date.now()) return 'No hay un borrado pendiente. Escribe por ejemplo /borrar ingresos para iniciar uno.';
+      const borrado = db.borrarDatos(usuario, pendiente.alcance);
+      const total = db.resumen(usuario, '0001-01-01', hoy);
+      return `🗑️ Listo, borré ${NOMBRE_ALCANCE[pendiente.alcance]} (${resumenBorrado(borrado)}).\n💼 Ahora tienes ${pesos(total.balance)}.`;
+    }
+
+    case 'cancelar_borrado': {
+      const existia = borradosPendientes.has(usuario);
+      diferir(() => borradosPendientes.delete(usuario));
+      return existia ? 'Listo, no borré nada.' : 'No hay un borrado pendiente.';
     }
 
     // Saldo total: todo lo registrado desde el principio, sin límite de mes

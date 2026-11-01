@@ -16,7 +16,7 @@ import { interpretarComando, atajoSinIA } from './comandos.js';
 import { ejecutar } from './acciones.js';
 import { responderAnalisis } from './analisis.js';
 import { iniciarApi } from './api.js';
-import { acotarAcciones } from './politicas.js';
+import { acotarAcciones, sinConfirmaciones } from './politicas.js';
 import { tieneDecimalConPunto } from './montos.js';
 import { crearLimitador, entero } from './limites.js';
 import * as acceso from './acceso.js';
@@ -235,7 +235,7 @@ async function atender(sock, jid, msg, usuario, texto) {
       db.sumarUso(usuario, fechaBogota(), { ia: 1 });
       const r = await interpretar(texto, hoy);
 
-      acciones = r.acciones;
+      acciones = sinConfirmaciones(r.acciones);
 
       if (r.texto) {
         respuestas.push(r.texto);
