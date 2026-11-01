@@ -12,11 +12,11 @@ import pino from 'pino';
 import * as db from './db.js';
 import { fechaBogota } from './fechas.js';
 import { hayIA, interpretar, nombreProveedor } from './ia.js';
-import { interpretarComando, atajoSinIA } from './comandos.js';
+import { interpretarComando, atajoSinIA, pideGuia, GUIA } from './comandos.js';
 import { ejecutar } from './acciones.js';
 import { responderAnalisis } from './analisis.js';
 import { iniciarApi } from './api.js';
-import { acotarAcciones } from './politicas.js';
+import { acotarAcciones, sinConfirmaciones } from './politicas.js';
 import { tieneDecimalConPunto } from './montos.js';
 import { crearLimitador, entero } from './limites.js';
 import * as acceso from './acceso.js';
@@ -140,7 +140,7 @@ const BIENVENIDA =
   '• "gasté 15 mil en almuerzo"\n' +
   '• "me pagaron 1,5 millones"\n' +
   '• "cuánta plata tengo"\n\n' +
-  'Escribe /ayuda para ver todo lo que puedo hacer.';
+  'Escribe /guia para una guía paso a paso o /ayuda para ver los comandos.';
 
 // ==========================================
 // CONTROL DE MENSAJES ENVIADOS
@@ -231,11 +231,13 @@ async function atender(sock, jid, msg, usuario, texto) {
       respuestas.push(
         'No conozco ese comando. Escribe /ayuda para ver los disponibles.'
       );
+    } else if (pideGuia(texto)) {
+      respuestas.push(GUIA);
     } else if (hayIA() && !iaAgotada) {
       db.sumarUso(usuario, fechaBogota(), { ia: 1 });
       const r = await interpretar(texto, hoy);
 
-      acciones = r.acciones;
+      acciones = sinConfirmaciones(r.acciones);
 
       if (r.texto) {
         respuestas.push(r.texto);

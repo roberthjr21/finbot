@@ -21,14 +21,14 @@ for (const variable of ['GEMINI_API_KEY', 'GEMINI_URL', 'ANTHROPIC_URL', 'MODELO
 
 const db = await import('./db.js');
 const { ejecutar } = await import('./acciones.js');
-const { interpretarComando, atajoSinIA, AYUDA } = await import('./comandos.js');
+const { interpretarComando, atajoSinIA, AYUDA, GUIA, pideGuia, alcanceDeBorrado } = await import('./comandos.js');
 const { CATEGORIAS } = await import('./categorias.js');
 const { interpretar, analizarConIA } = await import('./ia.js');
 const { datosAnalisis, responderAnalisis } = await import('./analisis.js');
 const { crearServidorApi } = await import('./api.js');
 const { pesos, rangoPeriodo, rangoMes, valida } = await import('./fechas.js');
 const { parseMonto, tieneDecimalConPunto } = await import('./montos.js');
-const { acotarAcciones } = await import('./politicas.js');
+const { acotarAcciones, sinConfirmaciones } = await import('./politicas.js');
 const { crearRespaldo, restaurarRespaldo } = await import('./db-admin.js');
 const acceso = await import('./acceso.js');
 
@@ -289,7 +289,7 @@ test('IA simulada: interpreta varias herramientas en un mensaje', async () => {
     assert.equal(r.acciones[1].datos.monto, 12000);
     assert.equal(r.texto, 'Listo, anoté los dos.');
     assert.equal(recibido.cabeceras['x-api-key'], 'clave-falsa');
-    assert.equal(recibido.cuerpo.tools.length, 11);
+    assert.equal(recibido.cuerpo.tools.length, 12);
     assert.match(recibido.cuerpo.system, /consultar_saldo/);
     assert.match(recibido.cuerpo.system, /Mascotas/);
     assert.match(recibido.cuerpo.system, /Hoy es 2026-10-17/);
@@ -708,6 +708,97 @@ test('saldo negativo: dice lo que tiene y explica por qué, sin las cuentas', ()
   assert.match(texto, /anótala como ingreso/);
   assert.doesNotMatch(texto, /ingresos \$218\.700|Este mes/);
   assert.match(ejecutar({ nombre: 'consultar_saldo', datos: { detalle: true } }, { usuario: N, hoy: HOY }), /ingresos \$218\.700 − gastos \$255\.100/);
+});
+
+test('/borrar: pide confirmación, borra solo lo pedido y solo de esa persona', () => {
+  const P = 'persona-borra';
+  const O = 'persona-no-se-toca';
+  const run = (u, nombre, datos = {}, id = nombre) => ejecutar({ nombre, datos }, { usuario: u, hoy: HOY, mensajeId: `borra:${u}:${id}`, indice: 0 });
+  const m = (u, tipo, monto, id) => db.agregarMovimiento({ usuario: u, tipo, monto, categoria: 'Otros', descripcion: '', fecha: HOY, mensajeId: `borra-m:${id}` });
+  for (const u of [P, O]) {
+    m(u, 'ingreso', 100000, `${u}1`); m(u, 'ingreso', 50000, `${u}2`); m(u, 'gasto', 30000, `${u}3`);
+    db.fijarPresupuesto(u, 'Comida', 200000);
+  }
+
+  // Pedir no borra nada
+  const pregunta = run(P, 'borrar_datos', { alcance: 'ingresos' });
+  assert.match(pregunta, /Vas a borrar PARA SIEMPRE todos tus ingresos/);
+  assert.match(pregunta, /2 movimientos/);
+  assert.match(pregunta, /\/borrar confirmar/);
+  assert.equal(db.listarMovimientos({ usuario: P }).length, 3);
+
+  // Otra persona no puede confirmar el borrado pendiente de P
+  assert.match(run(O, 'confirmar_borrado'), /No hay un borrado pendiente/);
+  assert.equal(db.listarMovimientos({ usuario: P }).length, 3);
+
+  // Confirmar borra solo los ingresos de P
+  assert.match(run(P, 'confirmar_borrado'), /borré todos tus ingresos \(2 movimientos\)[\s\S]*Ahora tienes -\$30\.000/);
+  assert.deepEqual(db.listarMovimientos({ usuario: P }).map((x) => x.tipo), ['gasto']);
+  assert.equal(db.listarMovimientos({ usuario: O }).length, 3); // la otra persona intacta
+  assert.equal(db.presupuestos(P).length, 1);
+
+  // Confirmar dos veces no vuelve a borrar; cancelar no borra
+  assert.match(run(P, 'confirmar_borrado'), /No hay un borrado pendiente/);
+  run(P, 'borrar_datos', { alcance: 'todo' });
+  assert.match(run(P, 'cancelar_borrado'), /no borré nada/);
+  assert.match(run(P, 'confirmar_borrado'), /No hay un borrado pendiente/);
+  assert.equal(db.listarMovimientos({ usuario: P }).length, 1);
+
+  // Todo: movimientos, deudas y presupuestos de P; O sigue igual
+  run(P, 'registrar_deuda', { persona: 'Juan', monto: 5000 }, 'd1');
+  run(P, 'borrar_datos', { alcance: 'todo' });
+  assert.match(run(P, 'confirmar_borrado'), /borré TODOS tus datos/);
+  assert.equal(db.listarMovimientos({ usuario: P }).length, 0);
+  assert.equal(db.presupuestos(P).length, 0);
+  assert.equal(db.resumenDeudas(P).length, 0);
+  assert.match(run(P, 'consultar_saldo'), /Todavía no tienes movimientos/);
+  assert.equal(db.listarMovimientos({ usuario: O }).length, 3);
+  assert.equal(db.presupuestos(O).length, 1);
+
+  // Sin nada que borrar y alcance inválido
+  assert.match(run(P, 'borrar_datos', { alcance: 'ingresos' }), /No tienes nada que borrar/);
+  assert.match(run(P, 'borrar_datos', { alcance: 'todo; DROP TABLE movimientos' }), /Dime qué borrar/);
+});
+
+test('/borrar gastos también deshace los abonos de deuda que respaldaban esos gastos', () => {
+  const P = 'persona-borra-gastos';
+  const run = (nombre, datos = {}, id = nombre) => ejecutar({ nombre, datos }, { usuario: P, hoy: HOY, mensajeId: `bg:${id}`, indice: 0 });
+  run('registrar_deuda', { persona: 'Ana', monto: 10000 }, 'a');
+  run('abonar_deuda', { persona: 'Ana', monto: 4000 }, 'b');
+  assert.match(run('consultar_deudas', { persona: 'Ana' }, 'c'), /Sigues debiéndole \$6\.000/);
+  run('borrar_datos', { alcance: 'gastos' });
+  run('confirmar_borrado');
+  assert.match(run('consultar_deudas', { persona: 'Ana' }, 'd'), /Sigues debiéndole \$10\.000/);
+});
+
+test('/borrar: comandos, frases sin barra y la IA nunca confirma sola', () => {
+  const accion = (texto) => interpretarComando(texto)?.acciones?.[0];
+  assert.deepEqual(accion('/borrar todos mis ingresos'), { nombre: 'borrar_datos', datos: { alcance: 'ingresos' } });
+  assert.deepEqual(accion('/borrar gastos'), { nombre: 'borrar_datos', datos: { alcance: 'gastos' } });
+  assert.deepEqual(accion('/borrar todo'), { nombre: 'borrar_datos', datos: { alcance: 'todo' } });
+  assert.deepEqual(accion('/borrar Presupuestos'), { nombre: 'borrar_datos', datos: { alcance: 'presupuestos' } });
+  assert.deepEqual(accion('/borrar confirmar'), { nombre: 'confirmar_borrado', datos: {} });
+  assert.deepEqual(accion('/borrar cancelar'), { nombre: 'cancelar_borrado', datos: {} });
+  assert.match(interpretarComando('/borrar').respuesta, /Dime qué borrar/);
+  assert.equal(alcanceDeBorrado(['lo', 'que', 'sea']), null);
+
+  assert.deepEqual(atajoSinIA('borrar todos mis ingresos'), { acciones: [{ nombre: 'borrar_datos', datos: { alcance: 'ingresos' } }] });
+  assert.equal(atajoSinIA('borra la comida de ayer'), null);
+
+  const desdeIA = [{ nombre: 'borrar_datos', datos: { alcance: 'todo' } }, { nombre: 'confirmar_borrado' }, { nombre: 'confirmar_deshacer' }, { nombre: 'cancelar_borrado' }];
+  assert.deepEqual(sinConfirmaciones(desdeIA).map((a) => a.nombre), ['borrar_datos']);
+  assert.match(AYUDA, /\/borrar/);
+});
+
+test('guía para personas nuevas: /guia y frases comunes, sin IA', () => {
+  for (const c of ['/guia', '/guía', '/empezar', '/ejemplos', '/tutorial']) assert.equal(interpretarComando(c).respuesta, GUIA);
+  for (const f of ['guía', 'Cómo funciona?', 'qué puedes hacer', 'como te uso', 'ayuda', 'Empezar', 'no sé qué hacer', 'para qué sirves']) assert.equal(pideGuia(f), true, f);
+  // frases de finanzas o largas no se confunden con la guía
+  for (const f of ['gasté 15 mil en almuerzo', 'cómo van mis gastos', 'cuánta plata tengo', 'ayuda con mi presupuesto de comida este mes por favor']) assert.equal(pideGuia(f), false, f);
+  assert.match(GUIA, /gasté 15 mil en almuerzo/);
+  assert.match(GUIA, /cuánto le debo a Juan/);
+  assert.ok(GUIA.length < 1800); // cabe cómodo en un mensaje de WhatsApp
+  assert.match(AYUDA, /\/guia/);
 });
 
 test('/saldo y ayuda', () => {

@@ -1,6 +1,38 @@
 import { buscarCategoria, normalizar, CATEGORIAS } from './categorias.js';
 import { parseMonto } from './montos.js';
 
+export const GUIA = [
+  '📖 *Guía rápida de FinBot*',
+  '',
+  '1️⃣ *Anota lo que gastas o ganas* (escríbelo como hablas)',
+  '• "gasté 15 mil en almuerzo"',
+  '• "compré aceite por 20 mil"',
+  '• "me pagaron 1,5 millones"',
+  '• "ayer gasté 8 lucas en bus"',
+  '',
+  '2️⃣ *Mira cómo vas*',
+  '• "cuánta plata tengo"',
+  '• "cuánto gasté esta semana"',
+  '• "qué gasté en comida este mes"',
+  '• "cómo van mis gastos" (te digo en qué estás fallando)',
+  '',
+  '3️⃣ *Controla con presupuestos*',
+  '• "ponme un presupuesto de 300 mil en comida"',
+  '• "cómo van mis presupuestos"',
+  '',
+  '4️⃣ *Deudas*',
+  '• "le debo 50 mil a Juan"',
+  '• "voy a abonar 20 mil a Juan"',
+  '• "cuánto le debo a Juan"',
+  '',
+  '5️⃣ *Si te equivocas*',
+  '• "borra lo último" (antes te pido confirmación)',
+  '• "/borrar todos mis ingresos" para empezar de cero esa parte',
+  '',
+  '💡 Solo hablo de tus finanzas personales y solo tú ves tus datos. También puedes verlos en la página web de FinBot entrando con un código que te llega por aquí.',
+  'Para ver todos los comandos escribe /ayuda.',
+].join('\n');
+
 export const AYUDA = [
   '🤖 *Tu ayudante financiero*',
   '',
@@ -23,7 +55,9 @@ export const AYUDA = [
   '/presupuestos',
   '/analisis',
   '/saldo   (con /saldo detalle ves las cuentas)',
+  '/guia   (guía paso a paso con ejemplos)',
   '/debo 50000 Juan   /abono 20000 Juan   /deudas [persona]',
+  '/borrar ingresos | gastos | deudas | presupuestos | todo   (pide confirmación)',
 ].join('\n');
 
 const PERIODOS = {
@@ -35,6 +69,19 @@ const PERIODOS = {
   ano: 'anio',
 };
 
+// "todos mis ingresos" -> 'ingresos', "todo" -> 'todo'. Devuelve null si no se entiende qué borrar.
+export function alcanceDeBorrado(palabras) {
+  const t = palabras.map((w) => normalizar(w).replace(/[^a-z0-9]/g, '')).filter(Boolean);
+  const tiene = (...opciones) => t.some((w) => opciones.includes(w));
+  if (tiene('ingreso', 'ingresos', 'salario', 'salarios')) return 'ingresos';
+  if (tiene('gasto', 'gastos')) return 'gastos';
+  if (tiene('deuda', 'deudas')) return 'deudas';
+  if (tiene('presupuesto', 'presupuestos')) return 'presupuestos';
+  if (tiene('movimiento', 'movimientos')) return 'movimientos';
+  if (tiene('todo', 'todos', 'todas', 'datos', 'cuenta')) return 'todo';
+  return null;
+}
+
 // Devuelve { acciones } o { respuesta } para un comando, o null si no es un comando conocido
 export function interpretarComando(texto) {
   const [cabeza, ...resto] = texto.trim().split(/\s+/);
@@ -44,6 +91,13 @@ export function interpretarComando(texto) {
     case 'ayuda':
     case 'help':
       return { respuesta: AYUDA };
+
+    case 'guia':
+    case 'empezar':
+    case 'start':
+    case 'ejemplos':
+    case 'tutorial':
+      return { respuesta: GUIA };
 
     case 'gasto':
     case 'ingreso': {
@@ -100,6 +154,16 @@ export function interpretarComando(texto) {
     case 'analizar':
       return { acciones: [{ nombre: 'analizar_gastos', datos: {} }] };
 
+    // /borrar todos mis ingresos  ·  /borrar confirmar  ·  /borrar cancelar
+    case 'borrar': {
+      const primera = normalizar(resto[0] ?? '');
+      if (primera === 'confirmar') return { acciones: [{ nombre: 'confirmar_borrado', datos: {} }] };
+      if (primera === 'cancelar') return { acciones: [{ nombre: 'cancelar_borrado', datos: {} }] };
+      const alcance = alcanceDeBorrado(resto);
+      if (!alcance) return { respuesta: 'Dime qué borrar: /borrar ingresos, /borrar gastos, /borrar deudas, /borrar presupuestos o /borrar todo. Antes de borrar te pido confirmación.' };
+      return { acciones: [{ nombre: 'borrar_datos', datos: { alcance } }] };
+    }
+
     case 'saldo':
       return { acciones: [{ nombre: 'consultar_saldo', datos: normalizar(resto[0] ?? '') === 'detalle' ? { detalle: true } : {} }] };
 
@@ -137,6 +201,14 @@ const PERIODOS_ATAJO = [
   [/\b(ano|anio)\b/, 'anio'],
 ];
 
+// "cómo funciona", "qué puedes hacer", "guía"...: se responde sin gastar IA. Solo frases cortas y claras.
+export function pideGuia(texto) {
+  const t = normalizar(texto).replace(/[¿?¡!.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t || t.length > 50) return false;
+  return /^(hola )?(una |la |mi )?(guia|tutorial|instrucciones|ejemplos)( de uso| rapida| paso a paso)?$/.test(t) ||
+    /^(como (funcionas|funciona|te uso|se usa|empiezo|empezar|uso el bot|uso esto)( esto| el bot)?|que (puedes|sabes|haces) hacer|que haces|para que sirves|ayuda|ayudame|empezar|no se que hacer|como te hablo)$/.test(t);
+}
+
 export function atajoSinIA(texto) {
   const t = normalizar(texto).replace(/[¿?¡!.,;:]/g, ' ').replace(/\s+/g, ' ').trim();
   if (!t || t.length > 80) return null; // los mensajes largos son mejor para la IA
@@ -162,6 +234,15 @@ export function atajoSinIA(texto) {
   // "cómo van mis gastos", "en qué estoy fallando"
   if (/^(como (van|voy|andan|estan) (mis )?(gastos|finanzas)|en que (estoy fallando|me estoy pasando))( .*)?$/.test(t)) {
     return accion('analizar_gastos');
+  }
+
+  // "borrar todos mis ingresos": solo pide confirmación; borrar de verdad exige /borrar confirmar
+  const borrar = t.match(/^(borrar|elimina|eliminar|borra) (.+)$/);
+  if (borrar) {
+    const alcance = alcanceDeBorrado(borrar[2].split(' '));
+    if (alcance && /^(todos? |todas? )?(mis |los |las )?(ingresos|gastos|deudas|presupuestos|movimientos|datos|salarios?)$|^todo$/.test(borrar[2])) {
+      return accion('borrar_datos', { alcance });
+    }
   }
 
   // "cuánto debo", "mis deudas", "cuánto le debo a Juan", "a quién le debo"
