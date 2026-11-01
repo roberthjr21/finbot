@@ -81,8 +81,9 @@ Texto libre (necesita la clave de IA):
 - "compré aceite por 20 mil" · "me pagaron 1,5 millones" · "ayer gasté 8 lucas en bus"
 - "cuánto gasté esta semana" · "qué gasté en comida este mes"
 - "ponme un presupuesto de 300 mil en comida" · "me equivoqué, borra lo último"
-- "cuánta plata tengo" · "cuánto me queda" (tu saldo total: todo lo que has registrado, sin límite
-  de mes; si tenías plata antes de empezar, anótala como ingreso)
+- "cuánta plata tengo" · "cuánto me queda" → responde solo lo que tienes (ingresos − gastos de todo lo
+  registrado, sin límite de mes). "de dónde sale" o `/saldo detalle` muestra las cuentas, el mes y lo que debes.
+  Si sale negativo, lo avisa: suele faltar anotar como ingreso la plata que tenías antes de empezar.
 - "cómo van mis gastos" · "en qué estoy fallando" (compara este mes con el mismo tramo del mes pasado,
   revisa tus presupuestos y te da observaciones concretas)
 - "¿cómo empiezo a ahorrar?" (respuestas generales, no es asesoría financiera)

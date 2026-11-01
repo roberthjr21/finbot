@@ -69,13 +69,13 @@ test('1-3. cuentas nuevas: se crean una sola vez, sin movimientos y con saldo $0
 test('4-6. los saldos y movimientos de cada persona son independientes', () => {
   mov(A, 'ingreso', 500000, 'Salario');
   mov(A, 'gasto', 30000, 'Comida');
-  assert.match(run(A, 'consultar_saldo'), /Tu saldo: \$470\.000/);
+  assert.match(run(A, 'consultar_saldo'), /Tienes \$470\.000/);
   assert.match(run(B, 'consultar_saldo'), /Todavía no tienes movimientos/);
   assert.equal(db.listarMovimientos({ usuario: B }).length, 0);
 
   mov(B, 'ingreso', 90000, 'Ventas');
-  assert.match(run(B, 'consultar_saldo'), /Tu saldo: \$90\.000/);
-  assert.match(run(A, 'consultar_saldo'), /Tu saldo: \$470\.000/); // A no cambió
+  assert.match(run(B, 'consultar_saldo'), /Tienes \$90\.000/);
+  assert.match(run(A, 'consultar_saldo'), /Tienes \$470\.000/); // A no cambió
   assert.equal(db.listarMovimientos({ usuario: A }).length, 2);
   assert.doesNotMatch(run(B, 'ultimos_movimientos'), /Comida|500\.000/);
 });
@@ -93,8 +93,8 @@ test('7. presupuestos y deudas con el mismo nombre no se mezclan', () => {
   assert.match(run(B, 'consultar_deudas', { persona: 'Juan' }), /Sigues debiéndole \$7\.000/);
   assert.match(run(B, 'abonar_deuda', { persona: 'Juan', monto: 20000 }), /Solo le debes \$7\.000/);
   // el abono de A bajó el saldo de A, no el de B
-  assert.match(run(A, 'consultar_saldo'), /Tu saldo: \$450\.000/);
-  assert.match(run(B, 'consultar_saldo'), /Tu saldo: \$90\.000/);
+  assert.match(run(A, 'consultar_saldo'), /Tienes \$450\.000/);
+  assert.match(run(B, 'consultar_saldo'), /Tienes \$90\.000/);
 });
 
 test('8. un ID de otra persona no se puede ver, borrar ni deshacer', () => {

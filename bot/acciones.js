@@ -179,6 +179,14 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       const total = db.resumen(usuario, '0001-01-01', hoy);
       const debes = db.totalDeudas(usuario);
       if (total.ingresos === 0 && total.gastos === 0 && debes === 0) return 'Todavía no tienes movimientos registrados.';
+      // Respuesta corta por defecto: solo lo que la persona tiene. Las cuentas van aparte (/saldo detalle).
+      if (datos.detalle !== true) {
+        if (total.balance >= 0) return `💼 Tienes ${pesos(total.balance)}.`;
+        return [
+          `💼 Tu saldo registrado es ${pesos(total.balance)}.`,
+          'Sale negativo porque lo que anotaste como gastos supera lo que anotaste como ingresos. Si tenías plata antes de empezar, anótala como ingreso. Para ver las cuentas escribe /saldo detalle.',
+        ].join('\n');
+      }
       const { desde } = rangoMes(hoy.slice(0, 7));
       const mes = db.resumen(usuario, desde, hoy);
       const lineas = [

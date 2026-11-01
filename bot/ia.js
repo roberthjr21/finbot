@@ -43,7 +43,11 @@ const HERRAMIENTAS = [
     nombre: 'consultar_saldo',
     descripcion:
       'Muestra el saldo total: todo lo que la persona ha registrado desde que empezó (ingresos menos gastos), sin límite de mes. ' +
-      'Úsala cuando pregunte cuánta plata tiene, cuánto le queda o cuál es su saldo.',
+      'Úsala cuando pregunte cuánta plata tiene, cuánto le queda o cuál es su saldo. ' +
+      'Responde corto (solo lo que tiene). Pon detalle=true solo si pide explicación o las cuentas ("de dónde sale", "explícame mi saldo", "detalle").',
+    propiedades: {
+      detalle: { type: 'boolean', description: 'true solo si pide ver de dónde sale el saldo o el detalle.' },
+    },
   },
   {
     nombre: 'ultimos_movimientos',
