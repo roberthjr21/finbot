@@ -1,6 +1,6 @@
 import 'server-only'
-import { headers } from 'next/headers'
-import { credencialesDashboardValidas } from './dashboard-auth'
+import { redirect } from 'next/navigation'
+import { configuracionBot, tokenDeSesion } from './sesion'
 
 export type Movimiento = {
   id: number
@@ -39,43 +39,36 @@ export type Resultado<T> =
   | { ok: true; datos: T }
   | { ok: false; motivo: 'configuracion' | 'conexion' }
 
-function configuracion() {
-  const base = process.env.BOT_API_URL?.trim().replace(/\/+$/, '')
-  const token = process.env.BOT_API_TOKEN?.trim()
-  if (!base || !token) return null
-  try {
-    const url = new URL(base)
-    const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
-    if (!['https:', 'http:'].includes(url.protocol) || (url.protocol === 'http:' && !local)) return null
-    if (url.username || url.password || url.search || url.hash) return null
-  } catch {
-    return null
-  }
-  return { base, token }
-}
-
+// Consulta de solo lectura al bot en nombre de la persona que tiene la sesión abierta.
+// La cuenta la decide el bot a partir del token de sesión (cookie HttpOnly): aquí nunca se envía
+// ni se acepta un número de teléfono o un id de usuario para elegir de quién son los datos.
 async function consultar<T>(ruta: string, validar: (valor: unknown) => valor is T): Promise<Resultado<T>> {
-  const cabecerasSolicitud = await headers()
-  if (!credencialesDashboardValidas(cabecerasSolicitud.get('authorization'))) {
-    return { ok: false, motivo: 'conexion' }
-  }
+  const sesion = await tokenDeSesion()
+  if (!sesion) redirect('/login')
 
-  const config = configuracion()
+  const config = configuracionBot()
   if (!config) return { ok: false, motivo: 'configuracion' }
 
+  let resultado: Resultado<T> = { ok: false, motivo: 'conexion' }
+  let sesionVencida = false
   try {
     const respuesta = await fetch(`${config.base}${ruta}`, {
-      headers: { Authorization: `Bearer ${config.token}` },
+      headers: { Authorization: `Bearer ${config.token}`, 'X-Sesion': sesion },
       cache: 'no-store',
       signal: AbortSignal.timeout(8000),
     })
-    if (!respuesta.ok) return { ok: false, motivo: 'conexion' }
-    const datos: unknown = await respuesta.json()
-    if (!validar(datos)) return { ok: false, motivo: 'conexion' }
-    return { ok: true, datos }
+    const cuerpo: unknown = await respuesta.json().catch(() => null)
+    if (respuesta.status === 401 && (cuerpo as { error?: unknown } | null)?.error === 'Sesión no válida') {
+      sesionVencida = true
+    } else if (respuesta.ok && validar(cuerpo)) {
+      resultado = { ok: true, datos: cuerpo }
+    }
   } catch {
-    return { ok: false, motivo: 'conexion' }
+    // se queda en "conexion"
   }
+  // La redirección va fuera del try para que no se confunda con un error de conexión
+  if (sesionVencida) redirect('/login?expirada=1')
+  return resultado
 }
 
 function mesActual() {
@@ -167,4 +160,43 @@ export async function obtenerPresupuestos(mes = mesActual()): Promise<Resultado<
         typeof valor.gastado === 'number' && Number.isSafeInteger(valor.gastado) && valor.gastado >= 0 &&
         typeof valor.porcentaje === 'number' && Number.isSafeInteger(valor.porcentaje)
     }))
+}
+
+export type Saldo = { ingresos: number; gastos: number; balance: number }
+export type DeudaPersona = {
+  persona: string
+  saldo: number
+  historial: Array<{ tipo: 'debo' | 'abono'; monto: number; descripcion: string; fecha: string }>
+}
+export type Deudas = { total: number; personas: DeudaPersona[] }
+
+export async function obtenerYo(): Promise<Resultado<{ telefono: string }>> {
+  return consultar('/api/yo', (dato): dato is { telefono: string } =>
+    !!dato && typeof dato === 'object' && typeof (dato as Record<string, unknown>).telefono === 'string')
+}
+
+export async function obtenerSaldo(): Promise<Resultado<Saldo>> {
+  return consultar('/api/saldo', (dato): dato is Saldo => {
+    if (!dato || typeof dato !== 'object') return false
+    const valor = dato as Record<string, unknown>
+    return Number.isSafeInteger(valor.ingresos) && Number.isSafeInteger(valor.gastos) && Number.isSafeInteger(valor.balance)
+  })
+}
+
+export async function obtenerDeudas(): Promise<Resultado<Deudas>> {
+  return consultar('/api/deudas', (dato): dato is Deudas => {
+    if (!dato || typeof dato !== 'object') return false
+    const valor = dato as Record<string, unknown>
+    return Number.isSafeInteger(valor.total) && Array.isArray(valor.personas) && valor.personas.every((p) => {
+      if (!p || typeof p !== 'object') return false
+      const fila = p as Record<string, unknown>
+      return typeof fila.persona === 'string' && Number.isSafeInteger(fila.saldo) && Array.isArray(fila.historial) &&
+        fila.historial.every((h) => {
+          if (!h || typeof h !== 'object') return false
+          const mov = h as Record<string, unknown>
+          return (mov.tipo === 'debo' || mov.tipo === 'abono') && Number.isSafeInteger(mov.monto) &&
+            typeof mov.descripcion === 'string' && typeof mov.fecha === 'string'
+        })
+    })
+  })
 }

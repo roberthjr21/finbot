@@ -113,6 +113,30 @@ Deudas (libreta de lo que debes):
 - Comandos sin IA: `/debo 50000 Juan` · `/abono 20000 Juan` · `/abono todo Juan` · `/deudas [persona]`.
 - Se guardan en la tabla `deudas` de `finanzas.db`; las bases anteriores se actualizan solas al arrancar.
 
+## Varias personas (multiusuario)
+
+Cualquier persona puede escribir al mismo número del bot. **La primera vez que alguien escribe desde un chat individual se le crea una cuenta propia**, con saldo $0 (sin ningún movimiento inventado) y un mensaje de bienvenida. Si ya tiene cuenta, se usa esa. Cada cuenta tiene un id interno estable y su número de WhatsApp normalizado (único); movimientos, presupuestos, deudas, análisis y saldo se calculan siempre solo con los datos de esa cuenta.
+
+- La cuenta sale **siempre del remitente real del mensaje** (nunca del texto que escriba). Grupos, estados, canales (newsletters) y mensajes propios del bot no crean cuentas.
+- Si WhatsApp entrega solo un identificador LID y no se puede resolver el número de teléfono, el mensaje se ignora (no se crea cuenta).
+- Privacidad estricta: no existe panel global ni acceso del propietario a los movimientos de otros. Ojo: es una separación de la aplicación; quien tenga acceso al archivo `finanzas.db` del equipo puede leerlo.
+
+Variables nuevas (todas opcionales):
+
+| Variable | Por defecto | Efecto |
+|---|---|---|
+| `REGISTRO_ABIERTO` | `1` | `1`: cualquier número nuevo recibe cuenta al escribir. `0`: solo existentes y los de `NUMEROS_PERMITIDOS`. |
+| `NUMEROS_PERMITIDOS` | (vacío) | Números que siempre pueden usar el bot (el propietario); sus cuentas se crean al arrancar. Ya no es obligatorio. |
+| `NUMEROS_BLOQUEADOS` | (vacío) | Números que el bot ignora siempre. |
+| `MAX_MENSAJES_MINUTO` | `20` | Mensajes por minuto por persona. |
+| `MAX_MENSAJES_DIA` | `300` | Mensajes por día por persona. |
+| `MAX_IA_DIA` | `150` | Consultas a la IA por día por persona; al agotarlas siguen funcionando los comandos y atajos. |
+| `SECRETO_SESION` | `API_TOKEN` | Clave con la que se guardan los códigos de acceso (HMAC). Cámbiala si quieres separarla del token. |
+
+**Migración.** Al arrancar con una base anterior, el bot primero hace una copia verificada de `finanzas.db` (junto a ella, con nombre `finanzas.db.antes-multiusuario-FECHA.db`) y luego añade la tabla `usuarios` y la columna `user_id` a los datos existentes. Los datos actuales se asignan a la cuenta cuyo número ya estaba guardado en cada fila; no se reasigna ni se adivina ningún dueño. Si la copia falla, el bot no arranca.
+
+**Inicio de sesión web.** El API del bot tiene rutas internas `POST /interno/codigo`, `/interno/verificar` y `/interno/salir` (solo con `API_TOKEN`, pensadas para el servidor de la web). El código se envía por la misma sesión de WhatsApp del bot, solo al número de una cuenta existente, y se guarda con hash; caduca en 5 minutos, es de un solo uso, con máximo 5 intentos y límites por número y por IP. Las rutas de datos (`/api/resumen`, `/api/movimientos`, `/api/presupuestos`, `/api/saldo`, `/api/deudas`, `/api/yo`) exigen además la cabecera `X-Sesion` y la cuenta se deriva de esa sesión. Las sesiones duran 7 días y se pueden revocar (cerrar sesión).
+
 ## API para tu página
 Solo lectura, con token. Por defecto escucha en `127.0.0.1:3001` y acepta peticiones desde
 `http://localhost:3000` (cámbialo con `ORIGEN_PERMITIDO`).

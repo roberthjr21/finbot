@@ -1,12 +1,13 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
-import { BarChart3, LayoutDashboard, PiggyBank, Sparkles } from 'lucide-react'
+import { BarChart3, HandCoins, LayoutDashboard, LogOut, PiggyBank, Sparkles } from 'lucide-react'
 import { formatearFecha, formatearMonto, type Resultado } from '@/lib/bot-api'
 
 const enlaces = [
   { href: '/', etiqueta: 'Resumen', Icono: LayoutDashboard },
   { href: '/movimientos', etiqueta: 'Movimientos', Icono: BarChart3 },
   { href: '/presupuestos', etiqueta: 'Presupuestos', Icono: PiggyBank },
+  { href: '/deudas', etiqueta: 'Deudas', Icono: HandCoins },
 ]
 
 export function DashboardShell({
@@ -45,6 +46,9 @@ export function DashboardShell({
       <main className="main-content">
         <header className="topbar">
           <div className="breadcrumb"><span>FinBot</span><span>/</span><strong>{pagina}</strong></div>
+          <form method="post" action="/api/auth/salir">
+            <button className="link-button" type="submit"><LogOut size={14} /> Cerrar sesión</button>
+          </form>
         </header>
         <div className="page-wrap">{children}</div>
         {salud && <p className="api-status" role="status">API: {salud.ok ? 'disponible' : 'sin respuesta'}{consultado ? ` · Consulta: ${new Intl.DateTimeFormat('es-CO', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Bogota' }).format(new Date(consultado))}` : ''}</p>}
