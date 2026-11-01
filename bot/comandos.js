@@ -29,6 +29,11 @@ export const GUIA = [
   '• "borra lo último" (antes te pido confirmación)',
   '• "/borrar todos mis ingresos" para empezar de cero esa parte',
   '',
+  '6️⃣ *Aprende*',
+  '• /ahorro: cómo ahorrar (con tus números)',
+  '• /invertir: lo básico antes de invertir',
+  '• /guiadeudas: cómo salir de deudas',
+  '',
   '💡 Solo hablo de tus finanzas personales y solo tú ves tus datos. También puedes verlos en la página web de FinBot entrando con un código que te llega por aquí.',
   'Para ver todos los comandos escribe /ayuda.',
 ].join('\n');
@@ -56,6 +61,8 @@ export const AYUDA = [
   '/analisis',
   '/saldo   (con /saldo detalle ves las cuentas)',
   '/guia   (guía paso a paso con ejemplos)',
+  '/ahorro   /invertir   /guiadeudas   (guías de finanzas)',
+  '/consejos si|no   (avisos para ahorrar o invertir)',
   '/debo 50000 Juan   /abono 20000 Juan   /deudas [persona]',
   '/borrar ingresos | gastos | deudas | presupuestos | todo   (pide confirmación)',
 ].join('\n');
@@ -91,6 +98,23 @@ export function interpretarComando(texto) {
     case 'ayuda':
     case 'help':
       return { respuesta: AYUDA };
+
+    case 'ahorro':
+    case 'ahorrar':
+      return { acciones: [{ nombre: 'mostrar_guia_financiera', datos: { tema: 'ahorro' } }] };
+    case 'invertir':
+    case 'inversion':
+    case 'inversiones':
+      return { acciones: [{ nombre: 'mostrar_guia_financiera', datos: { tema: 'inversion' } }] };
+    case 'guiadeudas':
+      return { acciones: [{ nombre: 'mostrar_guia_financiera', datos: { tema: 'deudas' } }] };
+
+    case 'consejos': {
+      const respuesta = normalizar(resto[0] ?? '');
+      if (['no', 'off', 'apagar', 'desactivar'].includes(respuesta)) return { acciones: [{ nombre: 'configurar_consejos', datos: { activo: false } }] };
+      if (['si', 'on', 'activar', 'encender'].includes(respuesta)) return { acciones: [{ nombre: 'configurar_consejos', datos: { activo: true } }] };
+      return { acciones: [{ nombre: 'configurar_consejos', datos: {} }] };
+    }
 
     case 'guia':
     case 'empezar':

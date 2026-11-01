@@ -485,3 +485,23 @@ export function borrarDatos(usuario, alcance) {
   if (['todo', 'presupuestos'].includes(alcance)) db.prepare('DELETE FROM presupuestos WHERE usuario = ?').run(usuario);
   return cantidades;
 }
+
+// --- Preferencias por persona (por ejemplo, si quiere recibir consejos) ---
+db.exec(`
+  CREATE TABLE IF NOT EXISTS preferencias (
+    usuario TEXT NOT NULL,
+    clave   TEXT NOT NULL,
+    valor   TEXT NOT NULL,
+    PRIMARY KEY (usuario, clave)
+  );
+`);
+
+export function preferencia(usuario, clave) {
+  return db.prepare('SELECT valor FROM preferencias WHERE usuario = ? AND clave = ?').get(usuario, clave)?.valor ?? null;
+}
+
+export function fijarPreferencia(usuario, clave, valor) {
+  db.prepare(
+    'INSERT INTO preferencias (usuario, clave, valor) VALUES (?, ?, ?) ON CONFLICT (usuario, clave) DO UPDATE SET valor = excluded.valor',
+  ).run(usuario, clave, String(valor));
+}
