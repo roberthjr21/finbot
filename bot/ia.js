@@ -106,6 +106,16 @@ const HERRAMIENTAS = [
     },
   },
   {
+    nombre: 'mostrar_guia_financiera',
+    descripcion:
+      'Muestra una guía educativa corta (información general). Úsala cuando la persona diga que quiere ahorrar, pregunte cómo ahorrar, ' +
+      'cómo o dónde invertir, si le conviene invertir, o cómo salir de deudas.',
+    propiedades: {
+      tema: { type: 'string', enum: ['ahorro', 'inversion', 'deudas'] },
+    },
+    requeridas: ['tema'],
+  },
+  {
     nombre: 'borrar_datos',
     descripcion:
       'Pide borrar datos de la persona ("borra todos mis ingresos", "elimina mis deudas", "empezar de cero"). NO borra nada todavía: ' +
@@ -260,7 +270,7 @@ Reglas:
 - Usa la categoría Mascotas para gastos de gatos, perros u otras mascotas (comida, veterinario). Usa Otros solo si ninguna categoría encaja.
 - Para saber cuánto gastó o ganó en un periodo usa consultar_resumen. Para saber cuánta plata tiene, cuánto le queda o cuál es su saldo, usa consultar_saldo. Para borrar datos en bloque usa borrar_datos (solo pide confirmación; la persona confirma con /borrar confirmar). Para ver lo último, ultimos_movimientos; para iniciar un borrado pide confirmación con deshacer_ultimo; para límites mensuales, fijar_presupuesto o ver_presupuestos.
 - Si pregunta cómo van sus gastos, en qué está fallando, si gasta mucho o quiere consejos sobre sus propios gastos, usa analizar_gastos: no respondas con consejos genéricos sin mirar sus datos.
-- Para otras preguntas de dinero (ahorro, deudas, cómo organizarse), responde en texto, breve y práctico. Das información general, no eres asesor financiero: no recomiendes inversiones concretas ni prometas resultados.
+- Si quiere ahorrar, aprender a invertir o salir de deudas, usa mostrar_guia_financiera. Para otras preguntas de dinero (cómo organizarse), responde en texto, breve y práctico. Das información general, no eres asesor financiero: no recomiendes inversiones ni productos concretos ni prometas resultados.
 - Si la persona pregunta algo que no tiene que ver con sus finanzas personales (programación, tareas, cultura general, etc.), no lo respondas: di en una frase corta y amable que solo puedes ayudar con sus gastos, ingresos, presupuestos y finanzas, y da un ejemplo de lo que sí puedes hacer.
 - Responde siempre en español, corto y amable. No inventes datos que la persona no haya dicho.`;
 }

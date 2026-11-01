@@ -2,6 +2,7 @@ import * as db from './db.js';
 import { CATEGORIAS } from './categorias.js';
 import { pesos, rangoMes, rangoPeriodo, valida } from './fechas.js';
 import { montoValido } from './montos.js';
+import { TEMAS_GUIA, configurarConsejos, consejoProactivo, guiaFinanciera } from './consejos.js';
 
 const confirmacionesBorrado = new Map();
 const CONFIRMACION_MS = 2 * 60 * 1000;
@@ -109,6 +110,7 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       if (descripcion) texto += ` (${descripcion})`;
       if (fecha !== hoy) texto += ` · ${fecha}`;
       if (datos.tipo === 'gasto') texto += alertaPresupuesto(usuario, categoria, fecha);
+      if (datos.tipo === 'ingreso') texto += consejoProactivo(usuario, hoy, { tipo: 'ingreso', monto });
       return texto;
     }
 
@@ -193,6 +195,15 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       return lineas.join('\n');
     }
 
+    // Guías de ahorro, inversión y deudas (información general) y el interruptor de consejos
+    case 'mostrar_guia_financiera': {
+      if (!TEMAS_GUIA.includes(datos.tema)) return guiaFinanciera(usuario, hoy, null);
+      return guiaFinanciera(usuario, hoy, datos.tema);
+    }
+
+    case 'configurar_consejos':
+      return configurarConsejos(usuario, typeof datos.activo === 'boolean' ? datos.activo : undefined);
+
     // "/borrar todos mis ingresos": primero pide confirmación; no borra nada todavía.
     case 'borrar_datos': {
       const alcance = datos.alcance;
@@ -232,7 +243,7 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       if (total.ingresos === 0 && total.gastos === 0 && debes === 0) return 'Todavía no tienes movimientos registrados.';
       // Respuesta corta por defecto: solo lo que la persona tiene. Las cuentas van aparte (/saldo detalle).
       if (datos.detalle !== true) {
-        if (total.balance >= 0) return `💼 Tienes ${pesos(total.balance)}.`;
+        if (total.balance >= 0) return `💼 Tienes ${pesos(total.balance)}.${consejoProactivo(usuario, hoy, { tipo: 'saldo', balance: total.balance })}`;
         return [
           `💼 Tu saldo registrado es ${pesos(total.balance)}.`,
           'Sale negativo porque lo que anotaste como gastos supera lo que anotaste como ingresos. Si tenías plata antes de empezar, anótala como ingreso. Para ver las cuentas escribe /saldo detalle.',

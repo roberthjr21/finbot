@@ -99,6 +99,8 @@ Comandos (funcionan siempre, también sin IA):
 /debo 50000 Juan   /abono 20000 Juan   /deudas [persona]
 /borrar ingresos | gastos | deudas | presupuestos | todo
 /guia   (guía paso a paso con ejemplos para personas nuevas)
+/ahorro   /invertir   /guiadeudas   (guías de finanzas)
+/consejos si|no   (avisos para ahorrar o invertir)
 ```
 Categorías (editables en `categorias.js`): Comida, Transporte, Servicios, Estudio, Salud, Ocio,
 Hogar, Mascotas, Ropa, Deudas, Ahorro, Salario, Ventas, Otros.
@@ -142,6 +144,12 @@ Variables nuevas (todas opcionales):
 
 ## Guía para personas nuevas
 `/guia` (también `/empezar`, `/ejemplos`, `/tutorial`) envía una guía corta con frases de ejemplo para registrar gastos e ingresos, consultar el saldo, usar presupuestos y deudas, y corregir errores. Frases cortas como "cómo funciona", "qué puedes hacer", "ayuda" o "no sé qué hacer" también la muestran, sin gastar IA. El mensaje de bienvenida de una cuenta nueva la menciona. El texto está en `GUIA`, en `comandos.js`, por si quieres cambiarlo.
+
+## Guías de finanzas y consejos
+- **Guías** (información general, sin recomendar productos concretos): `/ahorro` (regla 50/30/20 con tus ingresos y tu mayor gasto del mes), `/invertir` (qué revisar antes de invertir y qué opciones existen, con aviso de riesgo) y `/guiadeudas` (método avalancha o bola de nieve y tus deudas actuales). También responden frases como "quiero ahorrar", "cómo invierto" o "cómo salgo de deudas", sin gastar IA; con IA, la herramienta `mostrar_guia_financiera` las pide.
+- **Avisos suaves:** después de registrar un ingreso grande el bot pregunta "¿Quieres ahorrar una parte?" (sugiere el 20%), y si tu saldo es alto y no tienes deudas te invita a conocer cómo invertir. Máximo **un aviso por día y por persona**. Cada persona los apaga con `/consejos no` y los vuelve a activar con `/consejos si`.
+- Variables opcionales: `CONSEJO_INGRESO_MINIMO` (50000: desde qué ingreso se ofrece ahorrar) y `CONSEJO_INVERSION_DESDE` (1000000: desde qué saldo se menciona invertir).
+- Las preferencias se guardan en la tabla `preferencias`, que se crea sola en bases anteriores.
 
 ## Borrar datos en bloque
 `/borrar todos mis ingresos` (o `/borrar gastos`, `/borrar deudas`, `/borrar presupuestos`, `/borrar movimientos`, `/borrar todo`) y también frases como "borra todos mis ingresos" o "quiero empezar de cero".

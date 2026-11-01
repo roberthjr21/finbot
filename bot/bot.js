@@ -17,6 +17,7 @@ import { ejecutar } from './acciones.js';
 import { responderAnalisis } from './analisis.js';
 import { iniciarApi } from './api.js';
 import { acotarAcciones, sinConfirmaciones } from './politicas.js';
+import { temaDeGuia } from './consejos.js';
 import { tieneDecimalConPunto } from './montos.js';
 import { crearLimitador, entero } from './limites.js';
 import * as acceso from './acceso.js';
@@ -233,6 +234,8 @@ async function atender(sock, jid, msg, usuario, texto) {
       );
     } else if (pideGuia(texto)) {
       respuestas.push(GUIA);
+    } else if (temaDeGuia(texto)) {
+      acciones = [{ nombre: 'mostrar_guia_financiera', datos: { tema: temaDeGuia(texto) } }];
     } else if (hayIA() && !iaAgotada) {
       db.sumarUso(usuario, fechaBogota(), { ia: 1 });
       const r = await interpretar(texto, hoy);

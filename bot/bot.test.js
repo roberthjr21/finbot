@@ -21,6 +21,7 @@ for (const variable of ['GEMINI_API_KEY', 'GEMINI_URL', 'ANTHROPIC_URL', 'MODELO
 
 const db = await import('./db.js');
 const { ejecutar } = await import('./acciones.js');
+const { temaDeGuia } = await import('./consejos.js');
 const { interpretarComando, atajoSinIA, AYUDA, GUIA, pideGuia, alcanceDeBorrado } = await import('./comandos.js');
 const { CATEGORIAS } = await import('./categorias.js');
 const { interpretar, analizarConIA } = await import('./ia.js');
@@ -289,7 +290,7 @@ test('IA simulada: interpreta varias herramientas en un mensaje', async () => {
     assert.equal(r.acciones[1].datos.monto, 12000);
     assert.equal(r.texto, 'Listo, anoté los dos.');
     assert.equal(recibido.cabeceras['x-api-key'], 'clave-falsa');
-    assert.equal(recibido.cuerpo.tools.length, 12);
+    assert.equal(recibido.cuerpo.tools.length, 13);
     assert.match(recibido.cuerpo.system, /consultar_saldo/);
     assert.match(recibido.cuerpo.system, /Mascotas/);
     assert.match(recibido.cuerpo.system, /Hoy es 2026-10-17/);
@@ -799,6 +800,87 @@ test('guía para personas nuevas: /guia y frases comunes, sin IA', () => {
   assert.match(GUIA, /cuánto le debo a Juan/);
   assert.ok(GUIA.length < 1800); // cabe cómodo en un mensaje de WhatsApp
   assert.match(AYUDA, /\/guia/);
+});
+
+test('guías de finanzas: ahorro, inversión y deudas con tus propios números', () => {
+  const G = 'persona-guias';
+  const guia = (tema, usuario = G) => ejecutar({ nombre: 'mostrar_guia_financiera', datos: { tema } }, { usuario, hoy: HOY });
+  db.agregarMovimiento({ usuario: G, tipo: 'ingreso', monto: 1000000, categoria: 'Salario', descripcion: '', fecha: HOY, mensajeId: 'guia:1' });
+  db.agregarMovimiento({ usuario: G, tipo: 'gasto', monto: 300000, categoria: 'Comida', descripcion: '', fecha: HOY, mensajeId: 'guia:2' });
+
+  const ahorro = guia('ahorro');
+  assert.match(ahorro, /Guía para ahorrar/);
+  assert.match(ahorro, /ingresos por \$1\.000\.000[\s\S]*unos \$200\.000/);
+  assert.match(ahorro, /mayor gasto este mes es Comida \(\$300\.000, el 100%/);
+  assert.match(ahorro, /información general, no asesoría financiera/);
+
+  assert.doesNotMatch(guia('inversion'), /deudas anotadas/);
+  ejecutar({ nombre: 'registrar_deuda', datos: { persona: 'Juan', monto: 40000 } }, { usuario: G, hoy: HOY, mensajeId: 'guia:d', indice: 0 });
+  const inversion = guia('inversion');
+  assert.match(inversion, /Guía para empezar a invertir/);
+  assert.match(inversion, /deudas anotadas por \$40\.000/);
+  assert.match(inversion, /fondo de emergencia de 3 meses serían unos \$900\.000/);
+  assert.match(inversion, /no son recomendaciones/);
+  assert.match(inversion, /información general, no asesoría financiera/);
+  assert.doesNotMatch(inversion, /compra |te recomiendo comprar|garantizad[ao]s? de/i);
+
+  assert.match(guia('deudas'), /• Juan: \$40\.000/);
+  assert.doesNotMatch(guia('deudas', 'otra-persona-guias'), /• Juan:|\$40\.000|Hoy debes/); // cada quien ve sus deudas
+  assert.match(guia('tema-raro'), /\/ahorro/);
+});
+
+test('consejos: un aviso por día, solo si toca, y se pueden apagar por persona', () => {
+  const C = 'persona-consejos';
+  const E = 'persona-consejos-2';
+  const ingreso = (u, monto, hoy, id) => ejecutar(
+    { nombre: 'registrar_movimiento', datos: { tipo: 'ingreso', monto, categoria: 'Salario', descripcion: 'pago' } },
+    { usuario: u, hoy, mensajeId: `cons:${u}:${id}`, indice: 0 });
+
+  // Un ingreso pequeño no dispara aviso
+  assert.doesNotMatch(ingreso(C, 20000, HOY, 1), /Quieres ahorrar|¿Quieres ahorrar/);
+  // Uno grande sí: propone el 20%
+  const primero = ingreso(C, 500000, HOY, 2);
+  assert.match(primero, /¿Quieres ahorrar una parte\? Con la regla del 20%, serían \$100\.000/);
+  assert.match(primero, /\/consejos no/);
+  // El mismo día no se repite
+  assert.doesNotMatch(ingreso(C, 500000, HOY, 3), /Quieres ahorrar/);
+  // Al día siguiente vuelve a tocar
+  assert.match(ingreso(C, 500000, '2026-12-01', 4), /Quieres ahorrar/);
+
+  // Apagar los consejos es por persona
+  assert.match(ejecutar({ nombre: 'configurar_consejos', datos: { activo: false } }, { usuario: C, hoy: HOY }), /no te enviaré más consejos/);
+  assert.doesNotMatch(ingreso(C, 500000, '2026-12-02', 5), /Quieres ahorrar/);
+  assert.match(ingreso(E, 500000, '2026-12-02', 6), /Quieres ahorrar/); // otra persona no se ve afectada
+  assert.match(ejecutar({ nombre: 'configurar_consejos', datos: {} }, { usuario: C, hoy: HOY }), /apagados/);
+  assert.match(ejecutar({ nombre: 'configurar_consejos', datos: { activo: true } }, { usuario: C, hoy: HOY }), /activé los consejos/);
+  assert.match(ingreso(C, 500000, '2026-12-03', 7), /Quieres ahorrar/);
+
+  // Invitación a invertir: solo con saldo alto y sin deudas
+  const S = 'persona-consejo-saldo';
+  db.agregarMovimiento({ usuario: S, tipo: 'ingreso', monto: 2000000, categoria: 'Salario', descripcion: '', fecha: HOY, mensajeId: 'cons-saldo:1' });
+  const saldo = (hoy) => ejecutar({ nombre: 'consultar_saldo', datos: {} }, { usuario: S, hoy });
+  assert.match(saldo(HOY), /Tienes \$2\.000\.000\.[\s\S]*\/invertir/);
+  assert.doesNotMatch(saldo(HOY), /invertir/); // ya hubo aviso hoy
+  ejecutar({ nombre: 'registrar_deuda', datos: { persona: 'Ana', monto: 1000 } }, { usuario: S, hoy: HOY, mensajeId: 'cons-saldo:d', indice: 0 });
+  assert.doesNotMatch(saldo('2026-12-05'), /invertir/); // con deudas no se anima a invertir
+});
+
+test('guías y consejos: comandos y frases sin IA', () => {
+  const accion = (texto) => interpretarComando(texto)?.acciones?.[0];
+  assert.deepEqual(accion('/ahorro'), { nombre: 'mostrar_guia_financiera', datos: { tema: 'ahorro' } });
+  assert.deepEqual(accion('/invertir'), { nombre: 'mostrar_guia_financiera', datos: { tema: 'inversion' } });
+  assert.deepEqual(accion('/guiadeudas'), { nombre: 'mostrar_guia_financiera', datos: { tema: 'deudas' } });
+  assert.deepEqual(accion('/consejos no'), { nombre: 'configurar_consejos', datos: { activo: false } });
+  assert.deepEqual(accion('/consejos si'), { nombre: 'configurar_consejos', datos: { activo: true } });
+  assert.deepEqual(accion('/consejos'), { nombre: 'configurar_consejos', datos: {} });
+
+  for (const f of ['quiero ahorrar', '¿Cómo puedo ahorrar?', 'cómo ahorro', 'me gustaría ahorrar']) assert.equal(temaDeGuia(f), 'ahorro', f);
+  for (const f of ['quiero invertir', 'cómo invierto', 'dónde invierto', 'me gustaría invertir', '¿cómo empiezo a invertir?']) assert.equal(temaDeGuia(f), 'inversion', f);
+  for (const f of ['cómo salgo de deudas', 'quiero pagar mis deudas']) assert.equal(temaDeGuia(f), 'deudas', f);
+  // un gasto o una consulta no se confunden con una guía
+  for (const f of ['gasté 20 mil en ahorro', 'cuánto he ahorrado este mes', 'ahorré 50 mil', 'cuánta plata tengo']) assert.equal(temaDeGuia(f), null, f);
+  assert.match(AYUDA, /\/ahorro/);
+  assert.match(AYUDA, /\/consejos/);
 });
 
 test('/saldo y ayuda', () => {
