@@ -538,7 +538,8 @@ test('saldo: suma todo lo registrado, sin límite de mes', () => {
   assert.match(consultar(), /Todavía no tienes movimientos/);
   m('ingreso', 100000, '2026-09-10', 1); // mes pasado: cuenta en el saldo, no en "este mes"
   m('gasto', 30000, '2026-10-05', 2);
-  const texto = consultar();
+  assert.equal(consultar(), '💼 Tienes $70.000.'); // respuesta corta: solo lo que tiene
+  const texto = ejecutar({ nombre: 'consultar_saldo', datos: { detalle: true } }, { usuario: P, hoy: HOY });
   assert.match(texto, /Tu saldo: \$70\.000/);
   assert.match(texto, /Este mes: -\$30\.000/);
   assert.match(ejecutar({ nombre: 'consultar_saldo', datos: {} }, { usuario: 'otra-persona-saldo', hoy: HOY }), /Todavía no tienes movimientos/);
@@ -576,8 +577,9 @@ test('deudas: anotar, abonar y saber si sigues debiendo o ya pagaste', () => {
   // Anotar una deuda no cambia el saldo en pesos
   db.agregarMovimiento({ usuario: D, tipo: 'ingreso', monto: 100000, categoria: 'Salario', descripcion: '', fecha: HOY, mensajeId: 'deuda:ingreso' });
   assert.match(run('registrar_deuda', { persona: 'Juan Pérez', monto: 11000 }, 1), /le debes \$11\.000 a Juan Pérez/);
-  assert.match(saldo(), /Tu saldo: \$100\.000/);
-  assert.match(saldo(), /Debes en total: \$11\.000/);
+  assert.match(saldo(), /Tienes \$100\.000/);
+  assert.doesNotMatch(saldo(), /Debes/); // la respuesta corta no mezcla deudas
+  assert.match(ejecutar({ nombre: 'consultar_saldo', datos: { detalle: true } }, { usuario: D, hoy: HOY }), /Debes en total: \$11\.000/);
 
   // Ya existe "Juan Pérez": "juan" suma a la misma persona
   assert.match(run('registrar_deuda', { persona: 'juan', monto: 9000, descripcion: 'almuerzo' }, 2), /En total le debes \$20\.000 a Juan Pérez/);
@@ -586,7 +588,7 @@ test('deudas: anotar, abonar y saber si sigues debiendo o ya pagaste', () => {
   const abono = run('abonar_deuda', { persona: 'Juan', monto: 5000 }, 3);
   assert.match(abono, /Abono registrado: \$5\.000 a Juan Pérez/);
   assert.match(abono, /Sigues debiéndole \$15\.000/);
-  assert.match(saldo(), /Tu saldo: \$95\.000/);
+  assert.match(saldo(), /Tienes \$95\.000/);
   assert.match(run('consultar_deudas', { persona: 'JUAN' }, 4), /Sigues debiéndole \$15\.000 a Juan Pérez/);
   assert.match(run('consultar_deudas', {}, 5), /• Juan Pérez: \$15\.000[\s\S]*Total: \$15\.000/);
 
@@ -596,15 +598,15 @@ test('deudas: anotar, abonar y saber si sigues debiendo o ya pagaste', () => {
 
   // No se puede abonar más de lo que se debe
   assert.match(run('abonar_deuda', { persona: 'Juan', monto: 99000 }, 7), /Solo le debes \$15\.000/);
-  assert.match(saldo(), /Tu saldo: \$95\.000/);
+  assert.match(saldo(), /Tienes \$95\.000/);
 
   // Pagar todo termina la deuda
   assert.match(run('abonar_deuda', { persona: 'Juan', todo: true }, 8), /Ya pagaste toda la deuda/);
   assert.match(run('consultar_deudas', { persona: 'Juan' }, 9), /Ya pagaste toda la deuda con Juan Pérez/);
   assert.match(run('abonar_deuda', { persona: 'Juan', monto: 1000 }, 10), /Ya pagaste toda la deuda/);
   assert.match(run('consultar_deudas', {}, 11), /No le debes nada a nadie/);
-  assert.doesNotMatch(saldo(), /Debes en total/);
-  assert.match(saldo(), /Tu saldo: \$80\.000/);
+  assert.doesNotMatch(ejecutar({ nombre: 'consultar_saldo', datos: { detalle: true } }, { usuario: D, hoy: HOY }), /Debes en total/);
+  assert.match(saldo(), /Tienes \$80\.000/);
 
   // Datos inválidos y otra persona
   assert.match(run('registrar_deuda', { persona: '', monto: 1000 }, 12), /Dime a quién le debes/);
@@ -697,7 +699,19 @@ test('deudas: una base antigua sin la tabla se actualiza sola y conserva sus dat
   assert.deepEqual(r.deudas.map((d) => [d.persona, d.saldo]), [['Ana', 500]]);
 });
 
+test('saldo negativo: dice lo que tiene y explica por qué, sin las cuentas', () => {
+  const N = 'persona-saldo-negativo';
+  db.agregarMovimiento({ usuario: N, tipo: 'ingreso', monto: 218700, categoria: 'Otros', descripcion: '', fecha: HOY, mensajeId: 'neg:1' });
+  db.agregarMovimiento({ usuario: N, tipo: 'gasto', monto: 255100, categoria: 'Otros', descripcion: '', fecha: HOY, mensajeId: 'neg:2' });
+  const texto = ejecutar({ nombre: 'consultar_saldo', datos: {} }, { usuario: N, hoy: HOY });
+  assert.match(texto, /Tu saldo registrado es -\$36\.400/);
+  assert.match(texto, /anótala como ingreso/);
+  assert.doesNotMatch(texto, /ingresos \$218\.700|Este mes/);
+  assert.match(ejecutar({ nombre: 'consultar_saldo', datos: { detalle: true } }, { usuario: N, hoy: HOY }), /ingresos \$218\.700 − gastos \$255\.100/);
+});
+
 test('/saldo y ayuda', () => {
+  assert.deepEqual(interpretarComando('/saldo detalle'), { acciones: [{ nombre: 'consultar_saldo', datos: { detalle: true } }] });
   assert.deepEqual(interpretarComando('/saldo'), { acciones: [{ nombre: 'consultar_saldo', datos: {} }] });
   assert.match(AYUDA, /\/saldo/);
 });

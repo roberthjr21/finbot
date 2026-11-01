@@ -22,7 +22,7 @@ export const AYUDA = [
   '/presupuesto comida 300000',
   '/presupuestos',
   '/analisis',
-  '/saldo',
+  '/saldo   (con /saldo detalle ves las cuentas)',
   '/debo 50000 Juan   /abono 20000 Juan   /deudas [persona]',
 ].join('\n');
 
@@ -101,7 +101,7 @@ export function interpretarComando(texto) {
       return { acciones: [{ nombre: 'analizar_gastos', datos: {} }] };
 
     case 'saldo':
-      return { acciones: [{ nombre: 'consultar_saldo', datos: {} }] };
+      return { acciones: [{ nombre: 'consultar_saldo', datos: normalizar(resto[0] ?? '') === 'detalle' ? { detalle: true } : {} }] };
 
     // /debo 50000 Juan   ·   /abono 20000 Juan   ·   /abono todo Juan
     case 'debo':
