@@ -106,6 +106,16 @@ const HERRAMIENTAS = [
     },
   },
   {
+    nombre: 'borrar_datos',
+    descripcion:
+      'Pide borrar datos de la persona ("borra todos mis ingresos", "elimina mis deudas", "empezar de cero"). NO borra nada todavía: ' +
+      'le explica cuánto se borraría y le pide escribir /borrar confirmar. Nunca confirmes tú el borrado.',
+    propiedades: {
+      alcance: { type: 'string', enum: ['todo', 'movimientos', 'ingresos', 'gastos', 'deudas', 'presupuestos'], description: '"todo" solo si pide borrar todos sus datos o empezar de cero.' },
+    },
+    requeridas: ['alcance'],
+  },
+  {
     nombre: 'analizar_gastos',
     descripcion:
       'Analiza cómo van los gastos de la persona este mes frente al mes pasado y en qué categorías se está pasando. ' +
@@ -248,7 +258,7 @@ Reglas:
 - Deudas: si dice que DEBE plata ("debo 11 mil", "le debo 50 mil a Juan"), usa registrar_deuda (NO es un gasto: la plata aún no salió). Si abona o paga parte de una deuda ("voy a abonar 5 mil a Juan", "le pagué 20 mil a María"), usa abonar_deuda; si dice que pagó todo sin monto, abonar_deuda con todo=true. Para saber cuánto debe ("cuánto le debo a Juan", "cuánto debo en total"), usa consultar_deudas. Un gasto normal de pagar una cuota o factura que NO es deuda con una persona (tarjeta, servicio) sigue siendo registrar_movimiento en la categoría que corresponda (Deudas si es un crédito o tarjeta).
 - Si habla en futuro ("voy a gastar 3700 en pasaje"), regístralo igual como gasto de hoy y agrega una frase corta diciendo que lo anotaste como gasto de hoy y que, si todavía no lo paga, puede borrar el último con /deshacer.
 - Usa la categoría Mascotas para gastos de gatos, perros u otras mascotas (comida, veterinario). Usa Otros solo si ninguna categoría encaja.
-- Para saber cuánto gastó o ganó en un periodo usa consultar_resumen. Para saber cuánta plata tiene, cuánto le queda o cuál es su saldo, usa consultar_saldo. Para ver lo último, ultimos_movimientos; para iniciar un borrado pide confirmación con deshacer_ultimo; para límites mensuales, fijar_presupuesto o ver_presupuestos.
+- Para saber cuánto gastó o ganó en un periodo usa consultar_resumen. Para saber cuánta plata tiene, cuánto le queda o cuál es su saldo, usa consultar_saldo. Para borrar datos en bloque usa borrar_datos (solo pide confirmación; la persona confirma con /borrar confirmar). Para ver lo último, ultimos_movimientos; para iniciar un borrado pide confirmación con deshacer_ultimo; para límites mensuales, fijar_presupuesto o ver_presupuestos.
 - Si pregunta cómo van sus gastos, en qué está fallando, si gasta mucho o quiere consejos sobre sus propios gastos, usa analizar_gastos: no respondas con consejos genéricos sin mirar sus datos.
 - Para otras preguntas de dinero (ahorro, deudas, cómo organizarse), responde en texto, breve y práctico. Das información general, no eres asesor financiero: no recomiendes inversiones concretas ni prometas resultados.
 - Si la persona pregunta algo que no tiene que ver con sus finanzas personales (programación, tareas, cultura general, etc.), no lo respondas: di en una frase corta y amable que solo puedes ayudar con sus gastos, ingresos, presupuestos y finanzas, y da un ejemplo de lo que sí puedes hacer.

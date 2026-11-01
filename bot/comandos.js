@@ -24,6 +24,7 @@ export const AYUDA = [
   '/analisis',
   '/saldo   (con /saldo detalle ves las cuentas)',
   '/debo 50000 Juan   /abono 20000 Juan   /deudas [persona]',
+  '/borrar ingresos | gastos | deudas | presupuestos | todo   (pide confirmación)',
 ].join('\n');
 
 const PERIODOS = {
@@ -34,6 +35,19 @@ const PERIODOS = {
   anio: 'anio',
   ano: 'anio',
 };
+
+// "todos mis ingresos" -> 'ingresos', "todo" -> 'todo'. Devuelve null si no se entiende qué borrar.
+export function alcanceDeBorrado(palabras) {
+  const t = palabras.map((w) => normalizar(w).replace(/[^a-z0-9]/g, '')).filter(Boolean);
+  const tiene = (...opciones) => t.some((w) => opciones.includes(w));
+  if (tiene('ingreso', 'ingresos', 'salario', 'salarios')) return 'ingresos';
+  if (tiene('gasto', 'gastos')) return 'gastos';
+  if (tiene('deuda', 'deudas')) return 'deudas';
+  if (tiene('presupuesto', 'presupuestos')) return 'presupuestos';
+  if (tiene('movimiento', 'movimientos')) return 'movimientos';
+  if (tiene('todo', 'todos', 'todas', 'datos', 'cuenta')) return 'todo';
+  return null;
+}
 
 // Devuelve { acciones } o { respuesta } para un comando, o null si no es un comando conocido
 export function interpretarComando(texto) {
@@ -100,6 +114,16 @@ export function interpretarComando(texto) {
     case 'analizar':
       return { acciones: [{ nombre: 'analizar_gastos', datos: {} }] };
 
+    // /borrar todos mis ingresos  ·  /borrar confirmar  ·  /borrar cancelar
+    case 'borrar': {
+      const primera = normalizar(resto[0] ?? '');
+      if (primera === 'confirmar') return { acciones: [{ nombre: 'confirmar_borrado', datos: {} }] };
+      if (primera === 'cancelar') return { acciones: [{ nombre: 'cancelar_borrado', datos: {} }] };
+      const alcance = alcanceDeBorrado(resto);
+      if (!alcance) return { respuesta: 'Dime qué borrar: /borrar ingresos, /borrar gastos, /borrar deudas, /borrar presupuestos o /borrar todo. Antes de borrar te pido confirmación.' };
+      return { acciones: [{ nombre: 'borrar_datos', datos: { alcance } }] };
+    }
+
     case 'saldo':
       return { acciones: [{ nombre: 'consultar_saldo', datos: normalizar(resto[0] ?? '') === 'detalle' ? { detalle: true } : {} }] };
 
@@ -162,6 +186,15 @@ export function atajoSinIA(texto) {
   // "cómo van mis gastos", "en qué estoy fallando"
   if (/^(como (van|voy|andan|estan) (mis )?(gastos|finanzas)|en que (estoy fallando|me estoy pasando))( .*)?$/.test(t)) {
     return accion('analizar_gastos');
+  }
+
+  // "borrar todos mis ingresos": solo pide confirmación; borrar de verdad exige /borrar confirmar
+  const borrar = t.match(/^(borrar|elimina|eliminar|borra) (.+)$/);
+  if (borrar) {
+    const alcance = alcanceDeBorrado(borrar[2].split(' '));
+    if (alcance && /^(todos? |todas? )?(mis |los |las )?(ingresos|gastos|deudas|presupuestos|movimientos|datos|salarios?)$|^todo$/.test(borrar[2])) {
+      return accion('borrar_datos', { alcance });
+    }
   }
 
   // "cuánto debo", "mis deudas", "cuánto le debo a Juan", "a quién le debo"

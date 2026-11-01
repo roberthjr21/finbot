@@ -445,3 +445,43 @@ export function limpiarAcceso(ahora) {
   db.prepare('DELETE FROM codigos_login WHERE expira < ?').run(ahora - 86400);
   db.prepare('DELETE FROM sesiones_web WHERE expira < ? OR revocada = 1').run(ahora - 86400);
 }
+
+// --- Borrado masivo (a petición de la persona, con confirmación previa en acciones.js) ---
+export const ALCANCES_BORRADO = ['todo', 'movimientos', 'ingresos', 'gastos', 'deudas', 'presupuestos'];
+
+const tocaMovimientos = (alcance) => ['todo', 'movimientos', 'ingresos', 'gastos'].includes(alcance);
+const filtroTipo = (alcance) => (alcance === 'ingresos' ? "AND tipo = 'ingreso'" : alcance === 'gastos' ? "AND tipo = 'gasto'" : '');
+
+// Cuántas filas de esta persona se borrarían. Los abonos de deuda ligados a un gasto borrado
+// también se van (si no, quedaría un abono sin el gasto que lo respalda).
+export function contarBorrado(usuario, alcance) {
+  if (!ALCANCES_BORRADO.includes(alcance)) throw new Error('Alcance de borrado no válido');
+  const cuenta = (sql, ...parametros) => Number(db.prepare(sql).get(...parametros).n);
+  const filtro = filtroTipo(alcance);
+  return {
+    movimientos: tocaMovimientos(alcance)
+      ? cuenta(`SELECT COUNT(*) AS n FROM movimientos WHERE usuario = ? ${filtro}`, usuario)
+      : 0,
+    deudas: ['todo', 'deudas'].includes(alcance)
+      ? cuenta('SELECT COUNT(*) AS n FROM deudas WHERE usuario = ?', usuario)
+      : tocaMovimientos(alcance) && alcance !== 'ingresos'
+        ? cuenta(`SELECT COUNT(*) AS n FROM deudas WHERE usuario = ? AND movimiento_id IN (SELECT id FROM movimientos WHERE usuario = ? ${filtro})`, usuario, usuario)
+        : 0,
+    presupuestos: ['todo', 'presupuestos'].includes(alcance)
+      ? cuenta('SELECT COUNT(*) AS n FROM presupuestos WHERE usuario = ?', usuario)
+      : 0,
+  };
+}
+
+// Borra de verdad. Solo toca filas de este usuario. Debe llamarse dentro de una transacción.
+export function borrarDatos(usuario, alcance) {
+  const cantidades = contarBorrado(usuario, alcance);
+  const filtro = filtroTipo(alcance);
+  if (tocaMovimientos(alcance) && alcance !== 'ingresos' && alcance !== 'todo') {
+    db.prepare(`DELETE FROM deudas WHERE usuario = ? AND movimiento_id IN (SELECT id FROM movimientos WHERE usuario = ? ${filtro})`).run(usuario, usuario);
+  }
+  if (['todo', 'deudas'].includes(alcance)) db.prepare('DELETE FROM deudas WHERE usuario = ?').run(usuario);
+  if (tocaMovimientos(alcance)) db.prepare(`DELETE FROM movimientos WHERE usuario = ? ${filtro}`).run(usuario);
+  if (['todo', 'presupuestos'].includes(alcance)) db.prepare('DELETE FROM presupuestos WHERE usuario = ?').run(usuario);
+  return cantidades;
+}
