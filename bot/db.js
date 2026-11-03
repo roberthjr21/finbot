@@ -205,13 +205,17 @@ export function borrarMovimiento(usuario, id) {
   if (!fila) return null;
   const resultado = db.prepare('DELETE FROM movimientos WHERE usuario = ? AND id = ?').run(usuario, id);
   // Si ese movimiento era el gasto de un abono, el abono también se deshace
-  if (resultado.changes) db.prepare('DELETE FROM deudas WHERE usuario = ? AND movimiento_id = ?').run(usuario, id);
+  if (resultado.changes) {
+    db.prepare('DELETE FROM deudas WHERE usuario = ? AND movimiento_id = ?').run(usuario, id);
+    db.prepare('DELETE FROM prestamos WHERE usuario = ? AND movimiento_id = ?').run(usuario, id);
+  }
   return resultado.changes ? fila : null;
 }
 
 // Totales de ingresos y gastos, y gastos por categoría, entre dos fechas
-export function resumen(usuario, desde, hasta, categoria = null) {
-  const filtro = categoria ? 'AND categoria = ?' : '';
+// sinPrestamos: deja fuera la categoría Préstamos (plata prestada y devuelta), que no es consumo.
+export function resumen(usuario, desde, hasta, categoria = null, { sinPrestamos = false } = {}) {
+  const filtro = (categoria ? 'AND categoria = ?' : '') + (sinPrestamos ? " AND categoria <> 'Préstamos'" : '');
   const params = categoria ? [usuario, desde, hasta, categoria] : [usuario, desde, hasta];
 
   const totales = db
@@ -447,7 +451,7 @@ export function limpiarAcceso(ahora) {
 }
 
 // --- Borrado masivo (a petición de la persona, con confirmación previa en acciones.js) ---
-export const ALCANCES_BORRADO = ['todo', 'movimientos', 'ingresos', 'gastos', 'deudas', 'presupuestos'];
+export const ALCANCES_BORRADO = ['todo', 'movimientos', 'ingresos', 'gastos', 'deudas', 'prestamos', 'presupuestos'];
 
 const tocaMovimientos = (alcance) => ['todo', 'movimientos', 'ingresos', 'gastos'].includes(alcance);
 const filtroTipo = (alcance) => (alcance === 'ingresos' ? "AND tipo = 'ingreso'" : alcance === 'gastos' ? "AND tipo = 'gasto'" : '');
@@ -458,15 +462,19 @@ export function contarBorrado(usuario, alcance) {
   if (!ALCANCES_BORRADO.includes(alcance)) throw new Error('Alcance de borrado no válido');
   const cuenta = (sql, ...parametros) => Number(db.prepare(sql).get(...parametros).n);
   const filtro = filtroTipo(alcance);
+  // filas de una tabla de libreta ligadas a los movimientos que se van a borrar
+  const ligadas = (tabla) => cuenta(
+    `SELECT COUNT(*) AS n FROM ${tabla} WHERE usuario = ? AND movimiento_id IN (SELECT id FROM movimientos WHERE usuario = ? ${filtro})`, usuario, usuario);
   return {
     movimientos: tocaMovimientos(alcance)
       ? cuenta(`SELECT COUNT(*) AS n FROM movimientos WHERE usuario = ? ${filtro}`, usuario)
       : 0,
     deudas: ['todo', 'deudas'].includes(alcance)
       ? cuenta('SELECT COUNT(*) AS n FROM deudas WHERE usuario = ?', usuario)
-      : tocaMovimientos(alcance) && alcance !== 'ingresos'
-        ? cuenta(`SELECT COUNT(*) AS n FROM deudas WHERE usuario = ? AND movimiento_id IN (SELECT id FROM movimientos WHERE usuario = ? ${filtro})`, usuario, usuario)
-        : 0,
+      : tocaMovimientos(alcance) && alcance !== 'ingresos' ? ligadas('deudas') : 0,
+    prestamos: ['todo', 'prestamos'].includes(alcance)
+      ? cuenta('SELECT COUNT(*) AS n FROM prestamos WHERE usuario = ?', usuario)
+      : tocaMovimientos(alcance) ? ligadas('prestamos') : 0,
     presupuestos: ['todo', 'presupuestos'].includes(alcance)
       ? cuenta('SELECT COUNT(*) AS n FROM presupuestos WHERE usuario = ?', usuario)
       : 0,
@@ -477,10 +485,14 @@ export function contarBorrado(usuario, alcance) {
 export function borrarDatos(usuario, alcance) {
   const cantidades = contarBorrado(usuario, alcance);
   const filtro = filtroTipo(alcance);
-  if (tocaMovimientos(alcance) && alcance !== 'ingresos' && alcance !== 'todo') {
-    db.prepare(`DELETE FROM deudas WHERE usuario = ? AND movimiento_id IN (SELECT id FROM movimientos WHERE usuario = ? ${filtro})`).run(usuario, usuario);
+  const ligadas = (tabla) => db.prepare(
+    `DELETE FROM ${tabla} WHERE usuario = ? AND movimiento_id IN (SELECT id FROM movimientos WHERE usuario = ? ${filtro})`).run(usuario, usuario);
+  if (tocaMovimientos(alcance) && alcance !== 'todo') {
+    if (alcance !== 'ingresos') ligadas('deudas');
+    ligadas('prestamos');
   }
   if (['todo', 'deudas'].includes(alcance)) db.prepare('DELETE FROM deudas WHERE usuario = ?').run(usuario);
+  if (['todo', 'prestamos'].includes(alcance)) db.prepare('DELETE FROM prestamos WHERE usuario = ?').run(usuario);
   if (tocaMovimientos(alcance)) db.prepare(`DELETE FROM movimientos WHERE usuario = ? ${filtro}`).run(usuario);
   if (['todo', 'presupuestos'].includes(alcance)) db.prepare('DELETE FROM presupuestos WHERE usuario = ?').run(usuario);
   return cantidades;
@@ -504,4 +516,72 @@ export function fijarPreferencia(usuario, clave, valor) {
   db.prepare(
     'INSERT INTO preferencias (usuario, clave, valor) VALUES (?, ?, ?) ON CONFLICT (usuario, clave) DO UPDATE SET valor = excluded.valor',
   ).run(usuario, clave, String(valor));
+}
+
+// --- Préstamos que hace la persona ("me deben") ---
+// Cada fila es un préstamo ('presto') o un pago recibido ('pago'), y va ligada a su movimiento:
+// prestar saca plata del saldo (gasto en Préstamos) y cobrar la devuelve (ingreso en Préstamos).
+// Lo que te debe alguien es la suma de lo prestado menos la suma de lo que te ha pagado.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS prestamos (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario       TEXT    NOT NULL,
+    persona       TEXT    NOT NULL,
+    clave         TEXT    NOT NULL,
+    tipo          TEXT    NOT NULL CHECK (tipo IN ('presto', 'pago')),
+    monto         INTEGER NOT NULL CHECK (monto > 0),
+    descripcion   TEXT    NOT NULL DEFAULT '',
+    fecha         TEXT    NOT NULL,
+    movimiento_id INTEGER,
+    creado        TEXT    NOT NULL DEFAULT (datetime('now')),
+    mensaje_id    TEXT    UNIQUE
+  );
+  CREATE INDEX IF NOT EXISTS idx_prestamos_usuario ON prestamos (usuario, clave);
+`);
+
+// Devuelve el id nuevo, o null si ese mensaje ya estaba registrado.
+export function agregarPrestamo({ usuario, persona, tipo, monto, descripcion, fecha, movimientoId, mensajeId }) {
+  const r = db
+    .prepare(
+      `INSERT INTO prestamos (usuario, persona, clave, tipo, monto, descripcion, fecha, movimiento_id, mensaje_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (mensaje_id) DO NOTHING`,
+    )
+    .run(usuario, persona, clavePersona(persona), tipo, monto, descripcion ?? '', fecha, movimientoId ?? null, mensajeId ?? null);
+  return r.changes === 0 ? null : Number(r.lastInsertRowid);
+}
+
+// Personas a las que has prestado, con lo que te deben hoy (nunca negativo). Mayor deuda primero.
+export function resumenPrestamos(usuario) {
+  return db
+    .prepare(
+      `SELECT d.clave AS clave,
+              (SELECT p.persona FROM prestamos p WHERE p.usuario = d.usuario AND p.clave = d.clave ORDER BY p.id LIMIT 1) AS persona,
+              SUM(CASE d.tipo WHEN 'presto' THEN d.monto ELSE -d.monto END) AS saldo
+         FROM prestamos d
+        WHERE d.usuario = ?
+        GROUP BY d.clave
+        ORDER BY saldo DESC, persona`,
+    )
+    .all(usuario)
+    .map((f) => ({ clave: f.clave, persona: f.persona, saldo: Math.max(Number(f.saldo), 0) }));
+}
+
+export const totalPrestamos = (usuario) => resumenPrestamos(usuario).reduce((suma, p) => suma + p.saldo, 0);
+
+export function historialPrestamo(usuario, clave, limite = 5) {
+  return db
+    .prepare('SELECT tipo, monto, descripcion, fecha FROM prestamos WHERE usuario = ? AND clave = ? ORDER BY id DESC LIMIT ?')
+    .all(usuario, clave, limite);
+}
+
+// Si borrar este movimiento dejaría a alguien con más pagos que préstamos, devuelve su nombre
+// (no se debe borrar el préstamo original mientras existan pagos que lo respaldan).
+export function prestamoProtegido(usuario, movimientoId) {
+  const fila = db.prepare("SELECT persona, clave, monto FROM prestamos WHERE usuario = ? AND movimiento_id = ? AND tipo = 'presto'").get(usuario, movimientoId);
+  if (!fila) return null;
+  const { saldo } = db
+    .prepare("SELECT COALESCE(SUM(CASE tipo WHEN 'presto' THEN monto ELSE -monto END), 0) AS saldo FROM prestamos WHERE usuario = ? AND clave = ?")
+    .get(usuario, fila.clave);
+  return Number(saldo) - fila.monto < 0 ? fila.persona : null;
 }

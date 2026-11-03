@@ -10,6 +10,7 @@ export const CATEGORIAS = [
   'Mascotas',
   'Ropa',
   'Deudas',
+  'Préstamos',
   'Ahorro',
   'Salario',
   'Ventas',

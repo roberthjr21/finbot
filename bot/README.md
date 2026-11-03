@@ -101,6 +101,7 @@ Comandos (funcionan siempre, también sin IA):
 /guia   (guía paso a paso con ejemplos para personas nuevas)
 /ahorro   /invertir   /guiadeudas   (guías de finanzas)
 /consejos si|no   (avisos para ahorrar o invertir)
+/presto 50000 Pedro   /cobro 20000 Pedro   /medeben [persona]
 ```
 Categorías (editables en `categorias.js`): Comida, Transporte, Servicios, Estudio, Salud, Ocio,
 Hogar, Mascotas, Ropa, Deudas, Ahorro, Salario, Ventas, Otros.
@@ -141,6 +142,16 @@ Variables nuevas (todas opcionales):
 **Migración.** Al arrancar con una base anterior, el bot primero hace una copia verificada de `finanzas.db` (junto a ella, con nombre `finanzas.db.antes-multiusuario-FECHA.db`) y luego crea la tabla `usuarios` (id interno estable + número de WhatsApp único, que usan las sesiones web) y una cuenta por cada número que ya tenía datos. Las tablas de datos siguen ligadas por ese número de WhatsApp (columna `usuario`), así que tus datos actuales quedan en tu cuenta sin reasignar ni adivinar ningún dueño. Si la copia falla, el bot no arranca.
 
 **Inicio de sesión web.** El API del bot tiene rutas internas `POST /interno/codigo`, `/interno/verificar` y `/interno/salir` (solo con `API_TOKEN`, pensadas para el servidor de la web). El código se envía por la misma sesión de WhatsApp del bot, solo al número de una cuenta existente, y se guarda con hash; caduca en 5 minutos, es de un solo uso, con máximo 5 intentos y límites por número y por IP. Las rutas de datos (`/api/resumen`, `/api/movimientos`, `/api/presupuestos`, `/api/saldo`, `/api/deudas`, `/api/yo`) exigen además la cabecera `X-Sesion` y la cuenta se deriva de esa sesión. Las sesiones duran 7 días y se pueden revocar (cerrar sesión).
+
+## Préstamos que haces (lo que te deben)
+El contrario de las deudas: tú le prestas plata a alguien.
+- "le presté 50 mil a Pedro" · `/presto 50000 Pedro` → anota el préstamo. **La plata sale de tu saldo** (queda como gasto en la categoría *Préstamos*) y el bot recuerda quién te debe.
+- "Pedro me pagó 20 mil" · `/cobro 20000 Pedro` · "Pedro me pagó todo" · `/cobro todo Pedro` → baja lo que te debe y **la plata vuelve a tu saldo** (ingreso en *Préstamos*). Responde "Todavía te debe $X" o "✅ Ya te pagó todo". No acepta un pago mayor a lo que te debe y, si no dices el monto, te lo pregunta en vez de adivinar.
+- "quién me debe" · "cuánto me debe Pedro" · `/medeben [persona]` → lista lo pendiente o el estado de una persona con sus últimos movimientos.
+- `/saldo detalle` muestra aparte "Te deben en total". Los nombres no distinguen mayúsculas ni tildes ("pedro" es "Pedro Gómez"; si hay dos Pedro, te pide precisar).
+- La categoría *Préstamos* **no cuenta como consumo** en el análisis de gastos ni en las guías: prestar no es gastar.
+- `/deshacer` borra el último movimiento (por ejemplo, un pago recibido) y la deuda vuelve a como estaba; no deja borrar un préstamo que ya tiene pagos. `/borrar prestamos` limpia la libreta, y `/borrar todo` también.
+- Se guardan en la tabla `prestamos`, que se crea sola en bases anteriores. Aún no aparecen en la página web.
 
 ## Guía para personas nuevas
 `/guia` (también `/empezar`, `/ejemplos`, `/tutorial`) envía una guía corta con frases de ejemplo para registrar gastos e ingresos, consultar el saldo, usar presupuestos y deudas, y corregir errores. Frases cortas como "cómo funciona", "qué puedes hacer", "ayuda" o "no sé qué hacer" también la muestran, sin gastar IA. El mensaje de bienvenida de una cuenta nueva la menciona. El texto está en `GUIA`, en `comandos.js`, por si quieres cambiarlo.

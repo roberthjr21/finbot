@@ -18,7 +18,7 @@ const SALDO_PARA_INVERTIR = () => numeroEnv('CONSEJO_INVERSION_DESDE', 1000000);
 
 function gastosDelMes(usuario, hoy) {
   const { desde } = rangoMes(hoy.slice(0, 7));
-  return db.resumen(usuario, desde, hoy);
+  return db.resumen(usuario, desde, hoy, null, { sinPrestamos: true });
 }
 
 function guiaAhorro(usuario, hoy) {

@@ -10,11 +10,12 @@ const CONFIRMACION_MS = 2 * 60 * 1000;
 const borradosPendientes = new Map();
 
 const NOMBRE_ALCANCE = {
-  todo: 'TODOS tus datos (movimientos, deudas y presupuestos)',
+  todo: 'TODOS tus datos (movimientos, deudas, préstamos y presupuestos)',
   movimientos: 'todos tus movimientos (ingresos y gastos)',
   ingresos: 'todos tus ingresos',
   gastos: 'todos tus gastos',
   deudas: 'toda tu libreta de deudas',
+  prestamos: 'toda tu libreta de préstamos (lo que te deben)',
   presupuestos: 'todos tus presupuestos',
 };
 
@@ -22,6 +23,7 @@ function resumenBorrado(c) {
   const partes = [];
   if (c.movimientos) partes.push(`${c.movimientos} movimiento${c.movimientos === 1 ? '' : 's'}`);
   if (c.deudas) partes.push(`${c.deudas} registro${c.deudas === 1 ? '' : 's'} de deudas`);
+  if (c.prestamos) partes.push(`${c.prestamos} registro${c.prestamos === 1 ? '' : 's'} de préstamos`);
   if (c.presupuestos) partes.push(`${c.presupuestos} presupuesto${c.presupuestos === 1 ? '' : 's'}`);
   return partes.join(', ');
 }
@@ -52,9 +54,9 @@ const nombrePersona = (valor) => (typeof valor === 'string' ? valor.trim().repla
 
 // Encuentra a quién se refiere el usuario entre las personas con deudas.
 // "juan" encuentra "Juan Pérez"; si dos personas encajan, pide precisar.
-function buscarPersona(usuario, texto) {
+function buscarPersona(usuario, texto, fuente = db.resumenDeudas) {
   const clave = db.clavePersona(texto);
-  const todas = db.resumenDeudas(usuario);
+  const todas = fuente(usuario);
   const exacta = todas.find((p) => p.clave === clave);
   if (exacta) return { persona: exacta };
   const palabras = clave.split(' ').filter(Boolean);
@@ -65,6 +67,17 @@ function buscarPersona(usuario, texto) {
   if (parecidas.length === 1) return { persona: parecidas[0] };
   if (parecidas.length > 1) return { ambigua: parecidas.map((p) => p.persona) };
   return {};
+}
+
+// Cómo va lo que te debe una persona a la que le prestaste
+function estadoPrestamo(p) {
+  return p.saldo > 0 ? `${p.persona} te debe ${pesos(p.saldo)}.` : `✅ ${p.persona} ya te pagó todo.`;
+}
+
+function lineaPrestamo(d) {
+  return d.tipo === 'presto'
+    ? `🤝 ${d.fecha} · le prestaste +${pesos(d.monto)}${d.descripcion ? ` (${d.descripcion})` : ''}`
+    : `💰 ${d.fecha} · te pagó −${pesos(d.monto)}`;
 }
 
 // Texto de cómo va la deuda con una persona
@@ -164,6 +177,8 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
         if (fila?.bloqueada) return 'Esa deuda ya tiene abonos, así que no la borré. Si te equivocaste en un abono, usa /deshacer para borrar el abono primero.';
         return fila ? `↩️ Borré la deuda confirmada:\n📝 ${fila.fecha} · ${pesos(fila.monto)} a ${fila.persona}` : 'La deuda cambió o ya no está disponible; no borré nada.';
       }
+      const protegido = db.prestamoProtegido(usuario, pendiente.id);
+      if (protegido) return `Ese préstamo a ${protegido} ya tiene pagos, así que no lo borré. Si te equivocaste en un pago, usa /deshacer para borrar el pago primero.`;
       const fila = db.borrarMovimiento(usuario, pendiente.id);
       return fila ? `↩️ Borré el movimiento confirmado:\n${linea(fila)}` : 'El movimiento cambió o ya no está disponible; no borré nada.';
     }
@@ -193,6 +208,77 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
         lineas.push(`• ${p.categoria}: ${pesos(gastado)} de ${pesos(p.limite)} (${Math.round((gastado / p.limite) * 100)}%)`);
       }
       return lineas.join('\n');
+    }
+
+    // "Le presté 50 mil a Pedro": la plata sale de tu saldo (gasto en Préstamos) y queda anotado quién te debe.
+    case 'registrar_prestamo': {
+      const persona = nombrePersona(datos.persona);
+      if (!db.clavePersona(persona) || !montoValido(datos.monto) || (datos.descripcion !== undefined && typeof datos.descripcion !== 'string')) {
+        return '⚠️ Dime a quién le prestaste y cuánto, por ejemplo: "le presté 50 mil a Pedro".';
+      }
+      const descripcion = String(datos.descripcion ?? '').slice(0, 120);
+      const previa = buscarPersona(usuario, persona, db.resumenPrestamos);
+      if (previa.ambigua) return `⚠️ ¿A cuál te refieres: ${previa.ambigua.join(' o ')}? Dime el nombre completo.`;
+      const nombre = previa.persona?.persona ?? persona;
+      const movimientoId = db.agregarMovimiento({
+        usuario, tipo: 'gasto', monto: datos.monto, categoria: 'Préstamos', descripcion: `Préstamo a ${nombre}`.slice(0, 120),
+        fecha: hoy, mensajeId: `${mensajeId}:${indice}`,
+      });
+      if (movimientoId === null) return null; // ya estaba registrado
+      db.agregarPrestamo({
+        usuario, persona: nombre, tipo: 'presto', monto: datos.monto, descripcion, fecha: hoy,
+        movimientoId, mensajeId: `${mensajeId}:${indice}:p`,
+      });
+      const estado = db.resumenPrestamos(usuario).find((p) => p.clave === db.clavePersona(nombre));
+      return `🤝 Anotado: le prestaste ${pesos(datos.monto)} a ${nombre}${descripcion ? ` (${descripcion})` : ''}. Ese dinero salió de tu saldo.\nEn total ${nombre} te debe ${pesos(estado.saldo)}.`;
+    }
+
+    // "Pedro me pagó 20 mil": la plata vuelve a tu saldo (ingreso en Préstamos) y baja lo que te debe.
+    case 'registrar_pago_recibido': {
+      const persona = nombrePersona(datos.persona);
+      if (!db.clavePersona(persona)) return '⚠️ Dime quién te pagó y cuánto, por ejemplo: "Pedro me pagó 20 mil".';
+      const encontrada = buscarPersona(usuario, persona, db.resumenPrestamos);
+      if (encontrada.ambigua) return `⚠️ ¿A cuál te refieres: ${encontrada.ambigua.join(' o ')}? Dime el nombre completo.`;
+      if (!encontrada.persona) return `No tengo ningún préstamo anotado con ${persona}. Si le prestaste plata, dime por ejemplo: "le presté 50 mil a ${persona}".`;
+      const p = encontrada.persona;
+      if (p.saldo <= 0) return estadoPrestamo(p);
+
+      // Por seguridad, el monto es obligatorio salvo que diga expresamente que pagó todo
+      const monto = datos.todo === true ? p.saldo : datos.monto;
+      if (!montoValido(monto)) return `⚠️ ¿Cuánto te pagó ${p.persona}? Dime el monto, por ejemplo: "${p.persona} me pagó 20 mil" (o "me pagó todo").`;
+      if (monto > p.saldo) return `⚠️ ${p.persona} solo te debe ${pesos(p.saldo)}; no puedo registrar un pago de ${pesos(monto)}. Dime un monto de hasta ${pesos(p.saldo)}.`;
+
+      const movimientoId = db.agregarMovimiento({
+        usuario, tipo: 'ingreso', monto, categoria: 'Préstamos', descripcion: `Pago de ${p.persona}`.slice(0, 120),
+        fecha: hoy, mensajeId: `${mensajeId}:${indice}`,
+      });
+      if (movimientoId === null) return null; // ya estaba registrado
+      db.agregarPrestamo({
+        usuario, persona: p.persona, tipo: 'pago', monto, descripcion: '', fecha: hoy,
+        movimientoId, mensajeId: `${mensajeId}:${indice}:p`,
+      });
+      const quedan = p.saldo - monto;
+      return `💰 ${p.persona} te pagó ${pesos(monto)}.\n${quedan > 0 ? `Todavía te debe ${pesos(quedan)}.` : '✅ ¡Ya te pagó todo!'}`;
+    }
+
+    // "¿Quién me debe?" / "¿cuánto me debe Pedro?"
+    case 'consultar_prestamos': {
+      const persona = nombrePersona(datos.persona);
+      if (persona) {
+        const encontrada = buscarPersona(usuario, persona, db.resumenPrestamos);
+        if (encontrada.ambigua) return `⚠️ ¿A cuál te refieres: ${encontrada.ambigua.join(' o ')}?`;
+        if (!encontrada.persona) return `No tengo ningún préstamo anotado con ${persona}.`;
+        const p = encontrada.persona;
+        const historial = db.historialPrestamo(usuario, p.clave, 5);
+        return [estadoPrestamo(p), '', 'Últimos movimientos de este préstamo:', ...historial.map(lineaPrestamo)].join('\n');
+      }
+      const todas = db.resumenPrestamos(usuario);
+      const pendientes = todas.filter((p) => p.saldo > 0);
+      if (pendientes.length === 0) {
+        return todas.length > 0 ? '✅ Nadie te debe nada.' : 'No tienes préstamos anotados. Prueba: "le presté 50 mil a Pedro".';
+      }
+      const total = pendientes.reduce((suma, p) => suma + p.saldo, 0);
+      return ['🤝 Te deben:', ...pendientes.map((p) => `• ${p.persona}: ${pesos(p.saldo)}`), '', `Total: ${pesos(total)}`].join('\n');
     }
 
     // Guías de ahorro, inversión y deudas (información general) y el interruptor de consejos
@@ -257,6 +343,8 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
         `📅 Este mes: ${pesos(mes.balance)}`,
       ];
       if (debes > 0) lineas.push(`📝 Debes en total: ${pesos(debes)} (no está restado del saldo)`);
+      const teDeben = db.totalPrestamos(usuario);
+      if (teDeben > 0) lineas.push(`🤝 Te deben en total: ${pesos(teDeben)} (ya salió de tu saldo cuando prestaste)`);
       lineas.push('', 'Ojo: solo cuenta lo que has registrado. Si tenías plata antes de empezar, anótala como ingreso.');
       return lineas.join('\n');
     }

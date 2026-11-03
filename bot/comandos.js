@@ -24,6 +24,7 @@ export const GUIA = [
   '• "le debo 50 mil a Juan"',
   '• "voy a abonar 20 mil a Juan"',
   '• "cuánto le debo a Juan"',
+  '• "le presté 50 mil a Pedro" · "Pedro me pagó 20 mil" · "quién me debe"',
   '',
   '5️⃣ *Si te equivocas*',
   '• "borra lo último" (antes te pido confirmación)',
@@ -61,6 +62,7 @@ export const AYUDA = [
   '/analisis',
   '/saldo   (con /saldo detalle ves las cuentas)',
   '/guia   (guía paso a paso con ejemplos)',
+  '/presto 50000 Pedro   /cobro 20000 Pedro   /medeben [persona]   (lo que te deben)',
   '/ahorro   /invertir   /guiadeudas   (guías de finanzas)',
   '/consejos si|no   (avisos para ahorrar o invertir)',
   '/debo 50000 Juan   /abono 20000 Juan   /deudas [persona]',
@@ -82,6 +84,7 @@ export function alcanceDeBorrado(palabras) {
   const tiene = (...opciones) => t.some((w) => opciones.includes(w));
   if (tiene('ingreso', 'ingresos', 'salario', 'salarios')) return 'ingresos';
   if (tiene('gasto', 'gastos')) return 'gastos';
+  if (tiene('prestamo', 'prestamos')) return 'prestamos';
   if (tiene('deuda', 'deudas')) return 'deudas';
   if (tiene('presupuesto', 'presupuestos')) return 'presupuestos';
   if (tiene('movimiento', 'movimientos')) return 'movimientos';
@@ -206,6 +209,28 @@ export function interpretarComando(texto) {
         : { acciones: [{ nombre: 'abonar_deuda', datos: todo ? { persona, todo: true } : { persona, monto } }] };
     }
 
+    // /presto 50000 Pedro   ·   /cobro 20000 Pedro   ·   /cobro todo Pedro   ·   /medeben [persona]
+    case 'presto':
+    case 'preste':
+    case 'cobro':
+    case 'cobre': {
+      const esPrestamo = comando === 'presto' || comando === 'preste';
+      const todo = !esPrestamo && normalizar(resto[0] ?? '') === 'todo';
+      const conUnidad = !todo && resto[0] && /^(mil|lucas|k|millones?|millón|millon)$/iu.test(resto[1] ?? '');
+      const monto = todo ? undefined : parseMonto(conUnidad ? `${resto[0]} ${resto[1]}` : resto[0]);
+      const persona = resto.slice(todo ? 1 : conUnidad ? 2 : 1).join(' ');
+      if ((!todo && !monto) || !persona) {
+        return { respuesta: esPrestamo ? 'Usa: /presto 50000 Pedro' : 'Usa: /cobro 20000 Pedro (o /cobro todo Pedro)' };
+      }
+      return esPrestamo
+        ? { acciones: [{ nombre: 'registrar_prestamo', datos: { persona, monto } }] }
+        : { acciones: [{ nombre: 'registrar_pago_recibido', datos: todo ? { persona, todo: true } : { persona, monto } }] };
+    }
+
+    case 'medeben':
+    case 'prestamos':
+      return { acciones: [{ nombre: 'consultar_prestamos', datos: resto.length ? { persona: resto.join(' ') } : {} }] };
+
     // /deudas   ·   /deudas Juan
     case 'deudas':
     case 'deuda':
@@ -268,6 +293,11 @@ export function atajoSinIA(texto) {
       return accion('borrar_datos', { alcance });
     }
   }
+
+  // "quién me debe", "cuánto me debe Pedro": lo que otros te deben a ti
+  if (/^(quien|quienes) me (debe|deben)$|^mis prestamos$|^a quien le (he )?preste( plata| dinero)?$|^cuanto me deben( en total)?$/.test(t)) return accion('consultar_prestamos');
+  const medebe = t.match(/^cuanto me debe ([a-z ]{1,40})$/);
+  if (medebe) return accion('consultar_prestamos', { persona: medebe[1].trim() });
 
   // "cuánto debo", "mis deudas", "cuánto le debo a Juan", "a quién le debo"
   if (/^(cuanto debo( en total)?|mis deudas|a quien le debo|cuanto debo a todos)$/.test(t)) return accion('consultar_deudas');
