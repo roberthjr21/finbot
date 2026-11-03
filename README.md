@@ -91,7 +91,7 @@ cp .env.example .env.local
 Edita `web/.env.local` y define:
 
 ```dotenv
-BOT_API_URL=http://127.0.0.1:3001
+BOT_API_URL=http://127.0.0.1:50000
 BOT_API_TOKEN=el_mismo_valor_de_API_TOKEN
 ```
 
