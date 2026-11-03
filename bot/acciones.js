@@ -1,4 +1,5 @@
 import * as db from './db.js';
+import * as finanzas from './finanzas.js';
 import { CATEGORIAS } from './categorias.js';
 import { pesos, rangoMes, rangoPeriodo, valida } from './fechas.js';
 import { montoValido } from './montos.js';
@@ -34,7 +35,7 @@ function alertaPresupuesto(usuario, categoria, fecha) {
   if (!limite) return '';
   const { desde, hasta } = rangoMes(fecha.slice(0, 7));
   const gastado = db.gastoEnCategoria(usuario, categoria, desde, hasta);
-  const porcentaje = Math.round((gastado / limite) * 100);
+  const porcentaje = finanzas.porcentajePresupuesto(gastado, limite);
   if (gastado > limite) {
     return `\n🚨 Te pasaste del presupuesto de ${categoria}: ${pesos(gastado)} de ${pesos(limite)}.`;
   }
@@ -130,8 +131,11 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
     case 'consultar_resumen': {
       const rango = rangoPeriodo(datos.periodo ?? 'mes', hoy);
       const categoria = CATEGORIAS.includes(datos.categoria) ? datos.categoria : null;
-      const r = db.resumen(usuario, rango.desde, rango.hasta, categoria);
-      if (r.ingresos === 0 && r.gastos === 0) {
+      // Con categoría se muestra tal cual; sin ella, préstamos y pagos de deudas van aparte
+      const r = categoria
+        ? { ...db.resumen(usuario, rango.desde, rango.hasta, categoria), prestado: 0, cobrado: 0, pagosDeuda: 0 }
+        : finanzas.operativo(usuario, rango.desde, rango.hasta);
+      if (r.ingresos === 0 && r.gastos === 0 && r.prestado === 0 && r.cobrado === 0 && r.pagosDeuda === 0) {
         return `📊 No tienes movimientos ${rango.titulo === 'hoy' ? 'hoy' : `en ${rango.titulo}`}${categoria ? ` en ${categoria}` : ''}.`;
       }
       const lineas = [
@@ -143,6 +147,12 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       if (r.porCategoria.length > 0 && !categoria) {
         lineas.push('', 'En qué se fue la plata:');
         for (const c of r.porCategoria.slice(0, 5)) lineas.push(`• ${c.categoria}: ${pesos(c.total)}`);
+      }
+      if (r.prestado > 0 || r.cobrado > 0 || r.pagosDeuda > 0) {
+        lineas.push('', 'Aparte (no cuenta como ingreso ni gasto):');
+        if (r.prestado > 0) lineas.push(`🤝 Prestado: ${pesos(r.prestado)}`);
+        if (r.cobrado > 0) lineas.push(`↩️ Cobrado de préstamos: ${pesos(r.cobrado)}`);
+        if (r.pagosDeuda > 0) lineas.push(`📝 Pagos de deudas: ${pesos(r.pagosDeuda)}`);
       }
       return lineas.join('\n');
     }
@@ -205,7 +215,7 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       const lineas = ['🎯 Presupuestos de este mes:'];
       for (const p of lista) {
         const gastado = db.gastoEnCategoria(usuario, p.categoria, desde, hasta);
-        lineas.push(`• ${p.categoria}: ${pesos(gastado)} de ${pesos(p.limite)} (${Math.round((gastado / p.limite) * 100)}%)`);
+        lineas.push(`• ${p.categoria}: ${pesos(gastado)} de ${pesos(p.limite)} (${finanzas.porcentajePresupuesto(gastado, p.limite)}%)`);
       }
       return lineas.join('\n');
     }
@@ -272,12 +282,10 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
         const historial = db.historialPrestamo(usuario, p.clave, 5);
         return [estadoPrestamo(p), '', 'Últimos movimientos de este préstamo:', ...historial.map(lineaPrestamo)].join('\n');
       }
-      const todas = db.resumenPrestamos(usuario);
-      const pendientes = todas.filter((p) => p.saldo > 0);
+      const { todas, personas: pendientes, total } = finanzas.prestamos(usuario);
       if (pendientes.length === 0) {
         return todas.length > 0 ? '✅ Nadie te debe nada.' : 'No tienes préstamos anotados. Prueba: "le presté 50 mil a Pedro".';
       }
-      const total = pendientes.reduce((suma, p) => suma + p.saldo, 0);
       return ['🤝 Te deben:', ...pendientes.map((p) => `• ${p.persona}: ${pesos(p.saldo)}`), '', `Total: ${pesos(total)}`].join('\n');
     }
 
@@ -312,7 +320,7 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       diferir(() => borradosPendientes.delete(usuario));
       if (!pendiente || pendiente.vence < Date.now()) return 'No hay un borrado pendiente. Escribe por ejemplo /borrar ingresos para iniciar uno.';
       const borrado = db.borrarDatos(usuario, pendiente.alcance);
-      const total = db.resumen(usuario, '0001-01-01', hoy);
+      const total = finanzas.caja(usuario, hoy);
       return `🗑️ Listo, borré ${NOMBRE_ALCANCE[pendiente.alcance]} (${resumenBorrado(borrado)}).\n💼 Ahora tienes ${pesos(total.balance)}.`;
     }
 
@@ -324,8 +332,8 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
 
     // Saldo total: todo lo registrado desde el principio, sin límite de mes
     case 'consultar_saldo': {
-      const total = db.resumen(usuario, '0001-01-01', hoy);
-      const debes = db.totalDeudas(usuario);
+      const total = finanzas.caja(usuario, hoy);
+      const debes = finanzas.deudas(usuario).total;
       if (total.ingresos === 0 && total.gastos === 0 && debes === 0) return 'Todavía no tienes movimientos registrados.';
       // Respuesta corta por defecto: solo lo que la persona tiene. Las cuentas van aparte (/saldo detalle).
       if (datos.detalle !== true) {
@@ -336,14 +344,14 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
         ].join('\n');
       }
       const { desde } = rangoMes(hoy.slice(0, 7));
-      const mes = db.resumen(usuario, desde, hoy);
+      const mes = db.resumen(usuario, desde, hoy); // balance del mes con todo (es lo que movió tu saldo)
       const lineas = [
         `💼 Tu saldo: ${pesos(total.balance)}`,
         `(ingresos ${pesos(total.ingresos)} − gastos ${pesos(total.gastos)}, desde que empezaste a registrar)`,
         `📅 Este mes: ${pesos(mes.balance)}`,
       ];
       if (debes > 0) lineas.push(`📝 Debes en total: ${pesos(debes)} (no está restado del saldo)`);
-      const teDeben = db.totalPrestamos(usuario);
+      const teDeben = finanzas.prestamos(usuario).total;
       if (teDeben > 0) lineas.push(`🤝 Te deben en total: ${pesos(teDeben)} (ya salió de tu saldo cuando prestaste)`);
       lineas.push('', 'Ojo: solo cuenta lo que has registrado. Si tenías plata antes de empezar, anótala como ingreso.');
       return lineas.join('\n');
@@ -409,11 +417,10 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
         const historial = db.historialDeuda(usuario, p.clave, 5);
         return [estadoDeuda(p), '', 'Últimos movimientos de esta deuda:', ...historial.map(lineaDeuda)].join('\n');
       }
-      const pendientes = db.resumenDeudas(usuario).filter((p) => p.saldo > 0);
+      const { todas, personas: pendientes, total } = finanzas.deudas(usuario);
       if (pendientes.length === 0) {
-        return db.resumenDeudas(usuario).length > 0 ? '✅ No le debes nada a nadie.' : 'No tienes deudas anotadas. Prueba: "le debo 50 mil a Juan".';
+        return todas.length > 0 ? '✅ No le debes nada a nadie.' : 'No tienes deudas anotadas. Prueba: "le debo 50 mil a Juan".';
       }
-      const total = pendientes.reduce((suma, p) => suma + p.saldo, 0);
       return ['📝 Lo que debes:', ...pendientes.map((p) => `• ${p.persona}: ${pesos(p.saldo)}`), '', `Total: ${pesos(total)}`].join('\n');
     }
 

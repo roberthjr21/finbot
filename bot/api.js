@@ -3,6 +3,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 
 import * as db from './db.js';
+import * as finanzas from './finanzas.js';
 import { CATEGORIAS } from './categorias.js';
 import { fechaBogota, rangoMes, valida } from './fechas.js';
 import * as acceso from './acceso.js';
@@ -246,7 +247,7 @@ export function crearServidorApi({ enviar } = {}) {
         }
 
         case '/api/saldo': {
-          const total = db.resumen(usuario, '0001-01-01', fechaBogota());
+          const total = finanzas.caja(usuario, fechaBogota());
           responder(res, 200, { ingresos: total.ingresos, gastos: total.gastos, balance: total.balance }, cabeceras);
           return;
         }
@@ -262,7 +263,7 @@ export function crearServidorApi({ enviar } = {}) {
             historial: db.historialDeuda(usuario, p.clave, 5),
           }));
           responder(res, 200, {
-            total: personas.reduce((suma, p) => suma + Math.max(p.saldo, 0), 0),
+            total: finanzas.deudas(usuario).total,
             personas,
           }, cabeceras);
           return;
@@ -293,11 +294,8 @@ export function crearServidorApi({ enviar } = {}) {
           }
           const { desde, hasta } = rangoMes(mes);
 
-          const resumen = db.resumen(
-            usuario,
-            desde,
-            hasta
-          );
+          // Ingresos/gastos sin préstamos ni pagos de deudas (esos van en prestado, cobrado y pagosDeuda)
+          const resumen = finanzas.operativo(usuario, desde, hasta);
 
           responder(
             res,
@@ -460,13 +458,7 @@ export function crearServidorApi({ enviar } = {}) {
               return {
                 ...presupuesto,
                 gastado,
-                porcentaje:
-                  Number.isFinite(limiteMensual) &&
-                  limiteMensual > 0
-                    ? Math.round(
-                        (gastado / limiteMensual) * 100
-                      )
-                    : 0,
+                porcentaje: finanzas.porcentajePresupuesto(gastado, limiteMensual),
               };
             }
           );

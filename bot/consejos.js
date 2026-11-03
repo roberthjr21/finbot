@@ -1,4 +1,5 @@
 import * as db from './db.js';
+import * as finanzas from './finanzas.js';
 import { pesos, rangoMes } from './fechas.js';
 
 // Guías educativas de finanzas personales + avisos suaves ("¿quieres ahorrar una parte?").
@@ -18,7 +19,7 @@ const SALDO_PARA_INVERTIR = () => numeroEnv('CONSEJO_INVERSION_DESDE', 1000000);
 
 function gastosDelMes(usuario, hoy) {
   const { desde } = rangoMes(hoy.slice(0, 7));
-  return db.resumen(usuario, desde, hoy, null, { sinPrestamos: true });
+  return finanzas.operativo(usuario, desde, hoy);
 }
 
 function guiaAhorro(usuario, hoy) {
@@ -52,7 +53,7 @@ function guiaAhorro(usuario, hoy) {
 }
 
 function guiaInversion(usuario, hoy) {
-  const debes = db.totalDeudas(usuario);
+  const debes = finanzas.deudas(usuario).total;
   const mes = gastosDelMes(usuario, hoy);
   const lineas = [
     '📈 *Guía para empezar a invertir*',
@@ -80,10 +81,10 @@ function guiaInversion(usuario, hoy) {
 }
 
 function guiaDeudas(usuario) {
-  const pendientes = db.resumenDeudas(usuario).filter((p) => p.saldo > 0);
+  const { personas: pendientes, total } = finanzas.deudas(usuario);
   const lineas = ['📝 *Guía para salir de deudas*', ''];
   if (pendientes.length > 0) {
-    lineas.push('Hoy debes:', ...pendientes.map((p) => `• ${p.persona}: ${pesos(p.saldo)}`), `Total: ${pesos(pendientes.reduce((s, p) => s + p.saldo, 0))}`, '');
+    lineas.push('Hoy debes:', ...pendientes.map((p) => `• ${p.persona}: ${pesos(p.saldo)}`), `Total: ${pesos(total)}`, '');
   }
   lineas.push(
     '1. Anota todas tus deudas en el bot: "le debo 50 mil a Juan".',
@@ -130,7 +131,7 @@ export function consejoProactivo(usuario, hoy, contexto) {
   let texto = '';
   if (contexto.tipo === 'ingreso' && contexto.monto >= INGRESO_MINIMO()) {
     texto = `💡 ¿Quieres ahorrar una parte? Con la regla del 20%, serían ${pesos(Math.round(contexto.monto * 0.2))}. Escribe /ahorro para una guía corta.`;
-  } else if (contexto.tipo === 'saldo' && contexto.balance >= SALDO_PARA_INVERTIR() && db.totalDeudas(usuario) === 0) {
+  } else if (contexto.tipo === 'saldo' && contexto.balance >= SALDO_PARA_INVERTIR() && finanzas.deudas(usuario).total === 0) {
     texto = '💡 Tienes un saldo interesante y ninguna deuda anotada. ¿Te gustaría aprender cómo empezar a invertir una parte? Escribe /invertir.';
   }
   if (!texto) return '';

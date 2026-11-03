@@ -50,6 +50,15 @@ En una instalación local, la API utiliza por defecto `http://127.0.0.1:3001`. L
 
 **Importante:** `API_TOKEN` y `BOT_API_TOKEN` deben coincidir. No publiques estos valores ni los incluyas en variables `NEXT_PUBLIC_*`.
 
+## Cómo se calculan las cifras
+
+Todo está en `bot/finanzas.js` (una sola fuente para el bot, el análisis, los consejos y la API):
+
+- **Saldo en mano**: todo lo registrado (prestar o abonar una deuda saca plata; cobrar un préstamo la mete).
+- **Ingresos y Gastos del periodo**: solo movimiento normal. No incluyen préstamos que hiciste, lo que te devolvieron, ni abonos a tus deudas.
+- **Aparte**: `Prestado`, `Cobrado` y `Pagos de deudas` (la API los expone como `prestado`, `cobrado`, `pagosDeuda`).
+- **Lo que debo** y **lo que me deben** son listas distintas y nunca se suman entre sí.
+
 ## Instalación y ejecución local
 
 Necesitas Node.js 22.5 o superior y pnpm para la aplicación web.
