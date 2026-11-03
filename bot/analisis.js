@@ -1,4 +1,5 @@
 import * as db from './db.js';
+import * as finanzas from './finanzas.js';
 import { pesos, rangoMes, sumarDias } from './fechas.js';
 import { analizarConIA, hayIA } from './ia.js';
 
@@ -21,8 +22,8 @@ export function datosAnalisis(usuario, hoy) {
   const diaTope = Math.min(dia, Number(pasado.hasta.slice(8, 10)));
   const hastaPasado = `${pasado.desde.slice(0, 7)}-${dos(diaTope)}`;
 
-  const actual = db.resumen(usuario, desde, hoy, null, { sinPrestamos: true });
-  const previo = db.resumen(usuario, pasado.desde, hastaPasado, null, { sinPrestamos: true });
+  const actual = finanzas.operativo(usuario, desde, hoy);
+  const previo = finanzas.operativo(usuario, pasado.desde, hastaPasado);
 
   const totalPrevio = new Map(previo.porCategoria.map((c) => [c.categoria, c.total]));
   const nombres = new Set([...actual.porCategoria.map((c) => c.categoria), ...totalPrevio.keys()]);
@@ -45,13 +46,13 @@ export function datosAnalisis(usuario, hoy) {
       categoria: p.categoria,
       limite: p.limite,
       gastado,
-      porcentaje: Math.round((gastado / p.limite) * 100),
+      porcentaje: finanzas.porcentajePresupuesto(gastado, p.limite),
     };
   });
 
   const mayoresGastos = db
     .listarMovimientos({ usuario, desde, hasta: hoy, tipo: 'gasto', limite: 1000 })
-    .filter((m) => m.categoria !== 'Préstamos')
+    .filter((m) => m.categoria !== finanzas.CATEGORIA_PRESTAMOS && m.categoria !== finanzas.CATEGORIA_DEUDAS)
     .sort((a, b) => b.monto - a.monto)
     .slice(0, 3)
     .map((m) => ({ monto: m.monto, categoria: m.categoria }));

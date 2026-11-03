@@ -21,6 +21,7 @@ for (const variable of ['GEMINI_API_KEY', 'GEMINI_URL', 'ANTHROPIC_URL', 'MODELO
 
 const db = await import('./db.js');
 const { ejecutar } = await import('./acciones.js');
+const finanzas = await import('./finanzas.js');
 const { temaDeGuia } = await import('./consejos.js');
 const { interpretarComando, atajoSinIA, AYUDA, GUIA, pideGuia, alcanceDeBorrado } = await import('./comandos.js');
 const { CATEGORIAS } = await import('./categorias.js');
@@ -946,7 +947,7 @@ test('préstamos: no cuentan como gasto en el análisis y se distinguen de las d
   const datos = datosAnalisis(P, HOY);
   assert.equal(datos.este_mes.gastos, 40000);
   assert.deepEqual(datos.mayores_gastos.map((g) => g.categoria), ['Comida']);
-  assert.equal(db.resumen(P, '2026-10-01', HOY, null, { sinPrestamos: true }).gastos, 40000);
+  assert.equal(finanzas.operativo(P, '2026-10-01', HOY).gastos, 40000);
   assert.equal(db.resumen(P, '2026-10-01', HOY).gastos, 240000);
 });
 

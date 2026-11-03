@@ -213,9 +213,9 @@ export function borrarMovimiento(usuario, id) {
 }
 
 // Totales de ingresos y gastos, y gastos por categoría, entre dos fechas
-// sinPrestamos: deja fuera la categoría Préstamos (plata prestada y devuelta), que no es consumo.
-export function resumen(usuario, desde, hasta, categoria = null, { sinPrestamos = false } = {}) {
-  const filtro = (categoria ? 'AND categoria = ?' : '') + (sinPrestamos ? " AND categoria <> 'Préstamos'" : '');
+// (Para cifras sin préstamos ni pagos de deudas usar finanzas.operativo)
+export function resumen(usuario, desde, hasta, categoria = null) {
+  const filtro = categoria ? 'AND categoria = ?' : '';
   const params = categoria ? [usuario, desde, hasta, categoria] : [usuario, desde, hasta];
 
   const totales = db
@@ -314,10 +314,6 @@ export function resumenDeudas(usuario) {
     )
     .all(usuario)
     .map((f) => ({ clave: f.clave, persona: f.persona, saldo: Number(f.saldo) }));
-}
-
-export function totalDeudas(usuario) {
-  return resumenDeudas(usuario).reduce((suma, p) => suma + Math.max(p.saldo, 0), 0);
 }
 
 export function historialDeuda(usuario, clave, limite = 5) {
@@ -566,8 +562,6 @@ export function resumenPrestamos(usuario) {
     .all(usuario)
     .map((f) => ({ clave: f.clave, persona: f.persona, saldo: Math.max(Number(f.saldo), 0) }));
 }
-
-export const totalPrestamos = (usuario) => resumenPrestamos(usuario).reduce((suma, p) => suma + p.saldo, 0);
 
 export function historialPrestamo(usuario, clave, limite = 5) {
   return db

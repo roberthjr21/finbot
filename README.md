@@ -30,6 +30,15 @@ Estas variables tienen que coincidir:
 
 `DASHBOARD_USER` y `DASHBOARD_PASSWORD` (en `web/.env.local`) protegen el panel con usuario y clave.
 
+## Cómo se calculan las cifras
+
+Todo está en `bot/finanzas.js` (una sola fuente para el bot, el análisis, los consejos y la API):
+
+- **Saldo en mano**: todo lo registrado (prestar o abonar una deuda saca plata; cobrar un préstamo la mete).
+- **Ingresos y Gastos del periodo**: solo movimiento normal. No incluyen préstamos que hiciste, lo que te devolvieron, ni abonos a tus deudas.
+- **Aparte**: `Prestado`, `Cobrado` y `Pagos de deudas` (la API los expone como `prestado`, `cobrado`, `pagosDeuda`).
+- **Lo que debo** y **lo que me deben** son listas distintas y nunca se suman entre sí.
+
 ## Puesta en marcha rápida
 
 ```bash
