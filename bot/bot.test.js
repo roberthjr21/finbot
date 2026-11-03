@@ -290,7 +290,7 @@ test('IA simulada: interpreta varias herramientas en un mensaje', async () => {
     assert.equal(r.acciones[1].datos.monto, 12000);
     assert.equal(r.texto, 'Listo, anoté los dos.');
     assert.equal(recibido.cabeceras['x-api-key'], 'clave-falsa');
-    assert.equal(recibido.cuerpo.tools.length, 13);
+    assert.equal(recibido.cuerpo.tools.length, 16);
     assert.match(recibido.cuerpo.system, /consultar_saldo/);
     assert.match(recibido.cuerpo.system, /Mascotas/);
     assert.match(recibido.cuerpo.system, /Hoy es 2026-10-17/);
@@ -881,6 +881,141 @@ test('guías y consejos: comandos y frases sin IA', () => {
   for (const f of ['gasté 20 mil en ahorro', 'cuánto he ahorrado este mes', 'ahorré 50 mil', 'cuánta plata tengo']) assert.equal(temaDeGuia(f), null, f);
   assert.match(AYUDA, /\/ahorro/);
   assert.match(AYUDA, /\/consejos/);
+});
+
+test('préstamos: le presté, me pagó y quién me debe', () => {
+  const P = 'persona-prestamos';
+  const run = (nombre, datos, id) => ejecutar({ nombre, datos }, { usuario: P, hoy: HOY, mensajeId: `prest:${id}`, indice: 0 });
+  const saldo = () => ejecutar({ nombre: 'consultar_saldo', datos: {} }, { usuario: P, hoy: HOY });
+  const detalle = () => ejecutar({ nombre: 'consultar_saldo', datos: { detalle: true } }, { usuario: P, hoy: HOY });
+  db.agregarMovimiento({ usuario: P, tipo: 'ingreso', monto: 100000, categoria: 'Salario', descripcion: '', fecha: HOY, mensajeId: 'prest:ing' });
+
+  assert.match(run('consultar_prestamos', {}, 0), /No tienes préstamos anotados/);
+  assert.match(run('consultar_prestamos', { persona: 'Pedro' }, 0), /No tengo ningún préstamo anotado con Pedro/);
+  assert.match(run('registrar_pago_recibido', { persona: 'Pedro', monto: 5000 }, 0), /No tengo ningún préstamo anotado/);
+
+  // Prestar saca la plata del saldo y deja anotado quién te debe
+  const r1 = run('registrar_prestamo', { persona: 'Pedro Gómez', monto: 50000 }, 1);
+  assert.match(r1, /le prestaste \$50\.000 a Pedro Gómez[\s\S]*salió de tu saldo[\s\S]*te debe \$50\.000/);
+  assert.equal(saldo(), '💼 Tienes $50.000.');
+  assert.match(detalle(), /Te deben en total: \$50\.000/);
+  // "pedro" es la misma persona: se suma
+  assert.match(run('registrar_prestamo', { persona: 'pedro', monto: 10000, descripcion: 'almuerzo' }, 2), /En total Pedro Gómez te debe \$60\.000/);
+  assert.match(run('consultar_prestamos', {}, 3), /• Pedro Gómez: \$60\.000[\s\S]*Total: \$60\.000/);
+  assert.match(run('consultar_prestamos', { persona: 'PEDRO' }, 4), /Pedro Gómez te debe \$60\.000[\s\S]*le prestaste \+\$10\.000 \(almuerzo\)/);
+
+  // El mismo mensaje no se registra dos veces
+  assert.equal(run('registrar_prestamo', { persona: 'Pedro Gómez', monto: 50000 }, 1), null);
+  assert.equal(saldo(), '💼 Tienes $40.000.');
+
+  // Pago parcial: la plata vuelve al saldo y baja lo que te debe
+  assert.match(run('registrar_pago_recibido', { persona: 'Pedro', monto: 20000 }, 5), /Pedro Gómez te pagó \$20\.000[\s\S]*Todavía te debe \$40\.000/);
+  assert.equal(saldo(), '💼 Tienes $60.000.');
+
+  // Seguridad: sin monto no adivina, y no acepta más de lo que debe
+  assert.match(run('registrar_pago_recibido', { persona: 'Pedro' }, 6), /¿Cuánto te pagó/);
+  assert.match(run('registrar_pago_recibido', { persona: 'Pedro', monto: 99000 }, 7), /solo te debe \$40\.000/);
+  assert.equal(saldo(), '💼 Tienes $60.000.');
+
+  // Pagar todo cierra la deuda
+  assert.match(run('registrar_pago_recibido', { persona: 'Pedro', todo: true }, 8), /Ya te pagó todo/);
+  assert.equal(saldo(), '💼 Tienes $100.000.');
+  assert.match(run('consultar_prestamos', { persona: 'Pedro' }, 9), /Pedro Gómez ya te pagó todo/);
+  assert.match(run('consultar_prestamos', {}, 10), /Nadie te debe nada/);
+  assert.match(run('registrar_pago_recibido', { persona: 'Pedro', monto: 1000 }, 11), /ya te pagó todo/);
+  assert.doesNotMatch(detalle(), /Te deben/);
+
+  // Datos inválidos y otra persona
+  assert.match(run('registrar_prestamo', { persona: '', monto: 1000 }, 12), /Dime a quién le prestaste/);
+  assert.match(run('registrar_prestamo', { persona: 'Ana', monto: -5 }, 13), /Dime a quién le prestaste/);
+  assert.match(ejecutar({ nombre: 'consultar_prestamos', datos: { persona: 'Pedro' } }, { usuario: 'otra-sin-prestamos', hoy: HOY }), /No tengo ningún préstamo/);
+});
+
+test('préstamos: no cuentan como gasto en el análisis y se distinguen de las deudas', () => {
+  const P = 'persona-prestamo-analisis';
+  const run = (nombre, datos, id) => ejecutar({ nombre, datos }, { usuario: P, hoy: HOY, mensajeId: `pa:${id}`, indice: 0 });
+  db.agregarMovimiento({ usuario: P, tipo: 'ingreso', monto: 500000, categoria: 'Salario', descripcion: '', fecha: HOY, mensajeId: 'pa:ing' });
+  db.agregarMovimiento({ usuario: P, tipo: 'gasto', monto: 40000, categoria: 'Comida', descripcion: '', fecha: HOY, mensajeId: 'pa:com' });
+  run('registrar_prestamo', { persona: 'Luis', monto: 200000 }, 1);
+  run('registrar_deuda', { persona: 'Luis', monto: 7000 }, 2); // Luis te debe 200 mil, y tú le debes 7 mil: listas aparte
+  assert.match(run('consultar_deudas', { persona: 'Luis' }, 3), /Sigues debiéndole \$7\.000 a Luis/);
+  assert.match(run('consultar_prestamos', { persona: 'Luis' }, 4), /Luis te debe \$200\.000/);
+
+  // El saldo sí refleja la plata prestada, pero el análisis no la trata como consumo
+  assert.equal(run('consultar_saldo', {}, 5), '💼 Tienes $260.000.');
+  const datos = datosAnalisis(P, HOY);
+  assert.equal(datos.este_mes.gastos, 40000);
+  assert.deepEqual(datos.mayores_gastos.map((g) => g.categoria), ['Comida']);
+  assert.equal(db.resumen(P, '2026-10-01', HOY, null, { sinPrestamos: true }).gastos, 40000);
+  assert.equal(db.resumen(P, '2026-10-01', HOY).gastos, 240000);
+});
+
+test('préstamos: nombres parecidos piden precisar y /deshacer no rompe lo que te deben', () => {
+  const P = 'persona-prestamo-deshacer';
+  const run = (nombre, datos, id) => ejecutar({ nombre, datos }, { usuario: P, hoy: HOY, mensajeId: `pd:${id}`, indice: 0 });
+  run('registrar_prestamo', { persona: 'Juan Pérez', monto: 1000 }, 1);
+  run('registrar_prestamo', { persona: 'Juan López', monto: 2000 }, 2);
+  assert.match(run('registrar_pago_recibido', { persona: 'Juan', monto: 500 }, 3), /¿A cuál te refieres: Juan López o Juan Pérez/);
+
+  // /deshacer borra el último movimiento (aquí, el pago) y la deuda vuelve a como estaba
+  run('registrar_pago_recibido', { persona: 'Juan López', monto: 500 }, 4);
+  assert.match(run('consultar_prestamos', { persona: 'Juan López' }, 5), /te debe \$1\.500/);
+  assert.match(run('deshacer_ultimo', {}, 6), /Pago de Juan López/);
+  assert.match(run('confirmar_deshacer', {}, 7), /Borré el movimiento confirmado/);
+  assert.match(run('consultar_prestamos', { persona: 'Juan López' }, 8), /te debe \$2\.000/);
+
+  // El préstamo original no se puede borrar mientras haya pagos que lo respaldan
+  run('registrar_pago_recibido', { persona: 'Juan López', monto: 2000 }, 9);
+  const original = db.listarMovimientos({ usuario: P }).find((m) => m.descripcion === 'Préstamo a Juan López');
+  assert.equal(db.prestamoProtegido(P, original.id), 'Juan López');
+  const otro = db.listarMovimientos({ usuario: P }).find((m) => m.descripcion === 'Préstamo a Juan Pérez');
+  assert.equal(db.prestamoProtegido(P, otro.id), null);
+});
+
+test('préstamos: /borrar los incluye y solo toca a esa persona', () => {
+  const P = 'persona-prestamo-borra';
+  const O = 'persona-prestamo-borra-otra';
+  const run = (u, nombre, datos, id) => ejecutar({ nombre, datos }, { usuario: u, hoy: HOY, mensajeId: `pb:${u}:${id}`, indice: 0 });
+  for (const u of [P, O]) {
+    run(u, 'registrar_prestamo', { persona: 'Rosa', monto: 30000 }, 1);
+    run(u, 'registrar_pago_recibido', { persona: 'Rosa', monto: 10000 }, 2);
+  }
+  // Borrar solo la libreta de préstamos deja los movimientos
+  assert.match(run(P, 'borrar_datos', { alcance: 'prestamos' }, 3), /libreta de préstamos[\s\S]*2 registros de préstamos/);
+  run(P, 'confirmar_borrado', {}, 4);
+  assert.match(run(P, 'consultar_prestamos', {}, 5), /No tienes préstamos anotados/);
+  assert.equal(db.listarMovimientos({ usuario: P }).length, 2);
+  assert.match(run(O, 'consultar_prestamos', {}, 6), /Rosa: \$20\.000/); // la otra persona intacta
+
+  // Borrar ingresos deshace los pagos recibidos; borrar todo limpia también los préstamos
+  run(O, 'borrar_datos', { alcance: 'ingresos' }, 7);
+  run(O, 'confirmar_borrado', {}, 8);
+  assert.match(run(O, 'consultar_prestamos', {}, 9), /Rosa: \$30\.000/);
+  run(O, 'borrar_datos', { alcance: 'todo' }, 10);
+  assert.match(run(O, 'confirmar_borrado', {}, 11), /borré TODOS tus datos/);
+  assert.match(run(O, 'consultar_prestamos', {}, 12), /No tienes préstamos anotados/);
+  assert.equal(db.listarMovimientos({ usuario: O }).length, 0);
+});
+
+test('préstamos: comandos y frases sin IA', () => {
+  const accion = (t) => interpretarComando(t)?.acciones?.[0];
+  assert.deepEqual(accion('/presto 50000 Pedro Gómez'), { nombre: 'registrar_prestamo', datos: { persona: 'Pedro Gómez', monto: 50000 } });
+  assert.deepEqual(accion('/presto 50 mil Ana'), { nombre: 'registrar_prestamo', datos: { persona: 'Ana', monto: 50000 } });
+  assert.deepEqual(accion('/cobro 20000 Pedro'), { nombre: 'registrar_pago_recibido', datos: { persona: 'Pedro', monto: 20000 } });
+  assert.deepEqual(accion('/cobro todo Pedro'), { nombre: 'registrar_pago_recibido', datos: { persona: 'Pedro', todo: true } });
+  assert.deepEqual(accion('/medeben'), { nombre: 'consultar_prestamos', datos: {} });
+  assert.deepEqual(accion('/medeben Pedro'), { nombre: 'consultar_prestamos', datos: { persona: 'Pedro' } });
+  assert.match(interpretarComando('/presto Pedro').respuesta, /Usa: \/presto/);
+  assert.match(interpretarComando('/cobro 5000').respuesta, /Usa: \/cobro/);
+  assert.deepEqual(accion('/borrar mis préstamos'), { nombre: 'borrar_datos', datos: { alcance: 'prestamos' } });
+
+  assert.deepEqual(atajoSinIA('¿Quién me debe?'), { acciones: [{ nombre: 'consultar_prestamos', datos: {} }] });
+  assert.deepEqual(atajoSinIA('cuánto me debe Pedro'), { acciones: [{ nombre: 'consultar_prestamos', datos: { persona: 'pedro' } }] });
+  assert.deepEqual(atajoSinIA('cuánto le debo a Juan'), { acciones: [{ nombre: 'consultar_deudas', datos: { persona: 'juan' } }] }); // deuda, no préstamo
+  assert.match(AYUDA, /\/presto/);
+  assert.match(GUIA, /le presté 50 mil a Pedro/);
+  assert.ok(GUIA.length < 1800);
+  assert.ok(CATEGORIAS.includes('Préstamos'));
 });
 
 test('/saldo y ayuda', () => {

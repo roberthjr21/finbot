@@ -106,6 +106,39 @@ const HERRAMIENTAS = [
     },
   },
   {
+    nombre: 'registrar_prestamo',
+    descripcion:
+      'Anota que la PERSONA le prestó plata a alguien (esa persona le debe a ella). La plata sale de su saldo. ' +
+      'Úsala con "le presté 50 mil a Pedro", "presté 20 mil a mi hermano". NO la uses cuando ella es quien debe.',
+    propiedades: {
+      persona: { type: 'string', description: 'A quién le prestó (nombre como lo dijo).' },
+      monto: { type: 'integer', minimum: 1, description: 'Monto prestado en pesos colombianos, entero.' },
+      descripcion: { type: 'string', description: 'Motivo muy corto, si lo dijo.' },
+    },
+    requeridas: ['persona', 'monto'],
+  },
+  {
+    nombre: 'registrar_pago_recibido',
+    descripcion:
+      'Registra que alguien a quien le prestó plata le pagó o le devolvió (total o parte). La plata vuelve a su saldo. ' +
+      'Úsala con "Pedro me pagó 20 mil", "me devolvieron 10 mil", "Pedro me pagó todo". Si pagó todo sin decir monto pon todo=true; si no dijo el monto ni que pagó todo, NO adivines: pregunta.',
+    propiedades: {
+      persona: { type: 'string', description: 'Quién le pagó.' },
+      monto: { type: 'integer', minimum: 1, description: 'Monto recibido en pesos colombianos. Omítelo si pagó todo.' },
+      todo: { type: 'boolean', description: 'true si pagó toda la deuda sin decir el monto.' },
+    },
+    requeridas: ['persona'],
+  },
+  {
+    nombre: 'consultar_prestamos',
+    descripcion:
+      'Dice quién le debe plata a la persona y cuánto. Con "persona" muestra lo que le debe esa persona y si ya le pagó; sin "persona" lista a todos. ' +
+      'Úsala con "quién me debe", "cuánto me debe Pedro", "¿Pedro ya me pagó?".',
+    propiedades: {
+      persona: { type: 'string', description: 'Opcional: de quién preguntar.' },
+    },
+  },
+  {
     nombre: 'mostrar_guia_financiera',
     descripcion:
       'Muestra una guía educativa corta (información general). Úsala cuando la persona diga que quiere ahorrar, pregunte cómo ahorrar, ' +
@@ -265,6 +298,7 @@ Reglas:
 - La moneda usa el formato colombiano: punto para miles y coma para decimales. No inventes ni adivines montos con separadores ambiguos.
 - Si dice "ayer", "el lunes", etc., calcula la fecha a partir de hoy. Si no dice fecha, no la envíes.
 - Si falta el monto o no se entiende qué pasó, NO registres nada: haz una pregunta corta.
+- Préstamos que HACE la persona (ella le prestó a otro y el otro le debe): "le presté 50 mil a Pedro" → registrar_prestamo; "Pedro me pagó 20 mil" → registrar_pago_recibido; "quién me debe" o "cuánto me debe Pedro" → consultar_prestamos. No los confundas con deudas: si la persona es quien DEBE, usa registrar_deuda.
 - Deudas: si dice que DEBE plata ("debo 11 mil", "le debo 50 mil a Juan"), usa registrar_deuda (NO es un gasto: la plata aún no salió). Si abona o paga parte de una deuda ("voy a abonar 5 mil a Juan", "le pagué 20 mil a María"), usa abonar_deuda; si dice que pagó todo sin monto, abonar_deuda con todo=true. Para saber cuánto debe ("cuánto le debo a Juan", "cuánto debo en total"), usa consultar_deudas. Un gasto normal de pagar una cuota o factura que NO es deuda con una persona (tarjeta, servicio) sigue siendo registrar_movimiento en la categoría que corresponda (Deudas si es un crédito o tarjeta).
 - Si habla en futuro ("voy a gastar 3700 en pasaje"), regístralo igual como gasto de hoy y agrega una frase corta diciendo que lo anotaste como gasto de hoy y que, si todavía no lo paga, puede borrar el último con /deshacer.
 - Usa la categoría Mascotas para gastos de gatos, perros u otras mascotas (comida, veterinario). Usa Otros solo si ninguna categoría encaja.
