@@ -1,58 +1,134 @@
 # FinBot
 
-Ayudante financiero personal: registras gastos e ingresos por WhatsApp y los consultas en un panel web.
+Asistente financiero personal por WhatsApp con un panel web privado. Permite registrar y consultar movimientos, presupuestos, deudas y préstamos, manteniendo los datos separados por usuario.
 
+## Estructura del proyecto
+
+```text
+finbot/
+├── bot/    # Bot de WhatsApp, lógica financiera, SQLite y API
+└── web/    # Panel web Next.js
 ```
- Tu WhatsApp ──► bot/ (Node + SQLite) ──► API de solo lectura (127.0.0.1:3001)
-                                                    ▲
-                                  web/ (Next.js, servidor) ──► tu navegador
-```
 
-| Carpeta | Qué es | Documentación |
+| Carpeta | Función | Requisitos |
 |---|---|---|
-| [`bot/`](bot/README.md) | Bot de WhatsApp, base de datos SQLite y API | Node 22.5+, `npm` |
-| [`web/`](web/README.md) | Panel web de solo lectura | Next.js, `pnpm` |
+| [`bot/`](bot/README.md) | Bot de WhatsApp, base de datos y API | Node.js 22.5 o superior, npm |
+| [`web/`](web/README.md) | Panel web de consulta | Node.js y pnpm |
 
-Cada carpeta es independiente: tiene su propio `package.json`, sus dependencias y su `.env`.
-Se instalan y ejecutan por separado.
+Cada aplicación tiene sus propias dependencias y configuración. Consulta también los README de cada carpeta para conocer sus detalles.
 
-## Cómo se conectan
+## Cómo funciona el acceso al panel
 
-La web nunca habla con WhatsApp ni con la base de datos: solo pide datos a la API del bot,
-desde el **servidor** de Next.js (el navegador no ve el token).
+FinBot utiliza inicio de sesión individual mediante un código enviado por WhatsApp. No se configura un usuario y contraseña compartidos para todo el panel.
 
-Estas variables tienen que coincidir:
+1. La persona escribe al número de WhatsApp del bot para crear o activar su cuenta, según la configuración de registro.
+2. En el panel web introduce su número de WhatsApp con indicativo internacional, sin el signo `+` ni espacios. Ejemplo: `573001234567`.
+3. El bot envía un código de verificación de 6 dígitos a ese número.
+4. La persona introduce el código en la web para iniciar sesión.
 
-| En `bot/.env` | En `web/.env.local` | Nota |
+**Características de seguridad del acceso:**
+- El código vence a los 5 minutos, se puede utilizar una sola vez y admite hasta 5 intentos.
+- La sesión web dura 7 días.
+- La sesión se guarda en una cookie protegida; el navegador no recibe el token privado de la API.
+- Cerrar sesión revoca la sesión en el bot y elimina la cookie.
+- Si el número no tiene una cuenta, la respuesta no revela si ese número está registrado.
+
+La configuración de registro abierto o restringido se controla desde el bot. Revisa `REGISTRO_ABIERTO`, `NUMEROS_PERMITIDOS` y `NUMEROS_BLOQUEADOS` en `bot/.env.example`.
+
+## Cómo se conectan el bot y la web
+
+La web no accede directamente a WhatsApp ni a SQLite. El servidor de Next.js consulta la API del bot y envía las credenciales privadas desde el servidor.
+
+| Archivo | Variable | Propósito |
 |---|---|---|
-| `API_TOKEN` | `BOT_API_TOKEN` | Mismo valor largo y secreto |
-| `API_HOST` + `API_PUERTO` (por defecto `127.0.0.1:3001`) | `BOT_API_URL` | Por ejemplo `http://127.0.0.1:3001` |
+| `bot/.env` | `API_TOKEN` | Clave secreta que protege la API |
+| `web/.env.local` | `BOT_API_TOKEN` | Debe tener el mismo valor que `API_TOKEN` |
+| `bot/.env` | `API_HOST` y `API_PUERTO` | Dirección y puerto donde escucha la API |
+| `web/.env.local` | `BOT_API_URL` | URL base para que Next.js alcance la API |
 
-`DASHBOARD_USER` y `DASHBOARD_PASSWORD` (en `web/.env.local`) protegen el panel con usuario y clave.
+En una instalación local, la API utiliza por defecto `http://127.0.0.1:3001`. La URL debe ser alcanzable desde el servidor de Next.js; `127.0.0.1` solo funciona cuando ambos procesos pueden comunicarse en el mismo equipo.
 
-## Puesta en marcha rápida
+**Importante:** `API_TOKEN` y `BOT_API_TOKEN` deben coincidir. No publiques estos valores ni los incluyas en variables `NEXT_PUBLIC_*`.
+
+## Instalación y ejecución local
+
+Necesitas Node.js 22.5 o superior y pnpm para la aplicación web.
+
+### 1. Configurar y arrancar el bot
+
+Desde la raíz del repositorio:
 
 ```bash
-# 1. Bot (en una terminal)
 cd bot
 npm ci
-cp .env.example .env     # completa NUMEROS_PERMITIDOS, API_TOKEN y, si quieres IA, una clave
-npm start                # escanea el QR la primera vez
+cp .env.example .env
+```
 
-# 2. Web (en otra terminal)
+Edita `bot/.env` y configura, como mínimo:
+
+- `NUMEROS_PERMITIDOS`: número del propietario con indicativo internacional, sin `+` ni espacios.
+- `API_TOKEN`: una clave larga, aleatoria y secreta.
+- `API_HOST` y `API_PUERTO`: dirección y puerto de la API, si necesitas cambiar los valores predeterminados.
+
+Después, inicia el bot:
+
+```bash
+npm start
+```
+
+La primera vez, sigue las instrucciones para vincular WhatsApp mediante el código QR. Mantén el bot en ejecución para que pueda recibir mensajes y enviar códigos de acceso.
+
+### 2. Configurar y arrancar la web
+
+Abre otra terminal, vuelve a la raíz del repositorio y ejecuta:
+
+```bash
 cd web
 pnpm install --frozen-lockfile
-cp .env.example .env.local   # BOT_API_URL, BOT_API_TOKEN, DASHBOARD_USER, DASHBOARD_PASSWORD
+cp .env.example .env.local
+```
+
+Edita `web/.env.local` y define:
+
+```dotenv
+BOT_API_URL=http://127.0.0.1:3001
+BOT_API_TOKEN=el_mismo_valor_de_API_TOKEN
+```
+
+Inicia el servidor de desarrollo:
+
+```bash
 pnpm dev
 ```
 
-## Dónde ejecutarlo
+Abre [http://localhost:3000](http://localhost:3000).
 
-El bot debe estar siempre encendido (mantiene la sesión de WhatsApp), así que lo más simple es
-ejecutar **bot y web en la misma máquina**, con la API del bot solo en `127.0.0.1`. Para publicar
-la web en Vercel haría falta una URL HTTPS privada (por ejemplo un túnel) que llegue al bot; una
-dirección `127.0.0.1` no sirve desde fuera de esa máquina.
+Para comprobar el proyecto antes de desplegarlo:
 
-## Seguridad
+```bash
+pnpm typecheck
+pnpm lint
+pnpm build
+```
 
-No subas a GitHub: `.env`, `.env.local`, `bot/auth/`, ni archivos `*.db` (ya están en `.gitignore`).
+## Despliegue
+
+El bot necesita permanecer activo y conectado a WhatsApp. La web puede ejecutarse en la misma máquina o desplegarse por separado, pero el servidor de Next.js debe poder alcanzar la API del bot mediante una conexión segura.
+
+Si despliegas la web en Vercel, configura `BOT_API_URL` y `BOT_API_TOKEN` como variables privadas del entorno. La URL de la API debe ser una dirección HTTPS alcanzable desde Vercel, por ejemplo mediante una arquitectura de túnel privado correctamente protegida. Una dirección `127.0.0.1` configurada en Vercel apunta al propio entorno de Vercel, no al ordenador donde está instalado el bot.
+
+Antes de pasar a producción, prueba la conexión desde un entorno de preview con una API de pruebas y credenciales independientes. Consulta [`web/README.md`](web/README.md) para las recomendaciones específicas del panel.
+
+## Seguridad y datos
+
+- No subas archivos `.env` ni `.env.local`.
+- No publiques `API_TOKEN`, `BOT_API_TOKEN`, `SECRETO_SESION` ni claves de proveedores de IA.
+- No subas la carpeta `bot/auth/` ni archivos de base de datos `*.db`.
+- No expongas la API del bot directamente a Internet sin una arquitectura de acceso seguro.
+- No uses prefijos `NEXT_PUBLIC_` para secretos.
+- Cada usuario debe consultar únicamente su propia información mediante su sesión.
+
+## Documentación adicional
+
+- [Documentación del bot](bot/README.md)
+- [Documentación de la aplicación web](web/README.md)
