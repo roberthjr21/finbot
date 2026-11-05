@@ -144,3 +144,54 @@ test('la API devuelve los mismos números que el bot', async () => {
     servidor.close();
   }
 });
+
+test('/api/prestamos: prestado, pagado y pendiente por persona, sin mezclar usuarios', async () => {
+  const servidor = crearServidorApi();
+  await new Promise((r) => servidor.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${servidor.address().port}`;
+  const sesion = async (tel) => {
+    db.asegurarUsuario(tel);
+    acceso.reiniciarLimites();
+    const ahora = acceso.ahoraS() + 200000 + (n += 1000);
+    const enviados = [];
+    await acceso.solicitarCodigo({ telefono: tel, enviar: async (t, texto) => enviados.push(texto), ahora });
+    return acceso.verificarCodigo({ telefono: tel, codigo: enviados[0].match(/\*(\d{6})\*/)[1], ahora }).token;
+  };
+  const get = async (ruta, token) =>
+    (await fetch(base + ruta, { headers: { Authorization: 'Bearer secreto-de-prueba', 'X-Sesion': token } })).json();
+  try {
+    const p = await get('/api/prestamos', await sesion(A));
+    assert.equal(p.total, 120000);
+    assert.equal(p.prestado, 200000);
+    assert.equal(p.pagado, 80000);
+    assert.equal(p.personas.length, 1);
+    assert.deepEqual(
+      { persona: p.personas[0].persona, prestado: p.personas[0].prestado, pagado: p.personas[0].pagado, saldo: p.personas[0].saldo },
+      { persona: 'Pedro', prestado: 200000, pagado: 80000, saldo: 120000 },
+    );
+    assert.equal(p.personas[0].historial.length, 2);
+    // Coherente con lo que dice el bot
+    assert.match(run(A, 'consultar_prestamos', {}), /Pedro: \$120\.000/);
+    // Otra cuenta no ve nada
+    assert.deepEqual(await get('/api/prestamos', await sesion(B)), { total: 0, prestado: 0, pagado: 0, personas: [] });
+  } finally {
+    servidor.closeAllConnections?.();
+    servidor.close();
+  }
+});
+
+test('origen del movimiento: préstamo, cobro y abono se identifican por su vínculo, sin cambiar saldos', () => {
+  const lista = db.listarMovimientos({ usuario: A, limite: 50 });
+  const origen = (descripcion) => lista.find((m) => m.descripcion === descripcion)?.origen;
+  assert.equal(lista.find((m) => m.categoria === 'Préstamos' && m.tipo === 'gasto').origen, 'prestamo');
+  assert.equal(lista.find((m) => m.categoria === 'Préstamos' && m.tipo === 'ingreso').origen, 'cobro');
+  assert.equal(lista.find((m) => m.categoria === 'Deudas').origen, 'abono_deuda');
+  assert.equal(origen('sueldo'), null);
+  assert.equal(origen('mercado'), null);
+  // Un gasto viejo en 'Deudas' sin registro de deuda no se reclasifica: origen null, pero sigue yendo a Pagos de deudas por categoría
+  const U = '573009990003';
+  assert.equal(db.listarMovimientos({ usuario: U }).find((m) => m.categoria === 'Deudas').origen, null);
+  assert.equal(finanzas.operativo(U, INICIO, HOY).pagosDeuda, 30000);
+  // Los saldos de A no cambiaron
+  assert.equal(finanzas.caja(A, HOY).balance, 730000);
+});

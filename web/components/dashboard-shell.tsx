@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
-import { BarChart3, HandCoins, LayoutDashboard, LogOut, PiggyBank, Sparkles } from 'lucide-react'
+import { BarChart3, Handshake, HandCoins, LayoutDashboard, LogOut, PiggyBank, Sparkles } from 'lucide-react'
 import { formatearFecha, formatearMonto, type Resultado } from '@/lib/bot-api'
 
 const enlaces = [
@@ -8,6 +8,7 @@ const enlaces = [
   { href: '/movimientos', etiqueta: 'Movimientos', Icono: BarChart3 },
   { href: '/presupuestos', etiqueta: 'Presupuestos', Icono: PiggyBank },
   { href: '/deudas', etiqueta: 'Deudas', Icono: HandCoins },
+  { href: '/prestamos', etiqueta: 'Préstamos', Icono: Handshake },
 ]
 
 export function DashboardShell({

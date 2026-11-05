@@ -270,6 +270,28 @@ export function crearServidorApi({ enviar } = {}) {
         }
 
         // ---------------------------------------------
+        // Préstamos: lo que te deben, por persona
+        // ---------------------------------------------
+
+        case '/api/prestamos': {
+          const { todas, total } = finanzas.prestamos(usuario);
+          const personas = todas.map((p) => ({
+            persona: p.persona,
+            prestado: p.prestado,
+            pagado: p.pagado,
+            saldo: p.saldo,
+            historial: db.historialPrestamo(usuario, p.clave, 5),
+          }));
+          responder(res, 200, {
+            total,
+            prestado: personas.reduce((s, p) => s + p.prestado, 0),
+            pagado: personas.reduce((s, p) => s + p.pagado, 0),
+            personas,
+          }, cabeceras);
+          return;
+        }
+
+        // ---------------------------------------------
         // Obtener categorías
         // ---------------------------------------------
 

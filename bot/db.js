@@ -178,7 +178,13 @@ export function listarMovimientos({ usuario, desde, hasta, tipo, categoria, limi
   params.push(Math.min(Math.max(Number(limite) || 100, 1), 1000));
   return db
     .prepare(
-      `SELECT id, tipo, monto, categoria, descripcion, fecha
+      `SELECT id, tipo, monto, categoria, descripcion, fecha,
+              CASE
+                WHEN EXISTS (SELECT 1 FROM prestamos p WHERE p.usuario = movimientos.usuario AND p.movimiento_id = movimientos.id AND p.tipo = 'presto') THEN 'prestamo'
+                WHEN EXISTS (SELECT 1 FROM prestamos p WHERE p.usuario = movimientos.usuario AND p.movimiento_id = movimientos.id AND p.tipo = 'pago') THEN 'cobro'
+                WHEN EXISTS (SELECT 1 FROM deudas d WHERE d.usuario = movimientos.usuario AND d.movimiento_id = movimientos.id AND d.tipo <> 'debo') THEN 'abono_deuda'
+                ELSE NULL
+              END AS origen
          FROM movimientos
         WHERE ${condiciones.join(' AND ')}
         ORDER BY fecha DESC, id DESC
@@ -553,14 +559,16 @@ export function resumenPrestamos(usuario) {
     .prepare(
       `SELECT d.clave AS clave,
               (SELECT p.persona FROM prestamos p WHERE p.usuario = d.usuario AND p.clave = d.clave ORDER BY p.id LIMIT 1) AS persona,
-              SUM(CASE d.tipo WHEN 'presto' THEN d.monto ELSE -d.monto END) AS saldo
+              SUM(CASE d.tipo WHEN 'presto' THEN d.monto ELSE -d.monto END) AS saldo,
+              SUM(CASE d.tipo WHEN 'presto' THEN d.monto ELSE 0 END) AS prestado,
+              SUM(CASE d.tipo WHEN 'pago' THEN d.monto ELSE 0 END) AS pagado
          FROM prestamos d
         WHERE d.usuario = ?
         GROUP BY d.clave
         ORDER BY saldo DESC, persona`,
     )
     .all(usuario)
-    .map((f) => ({ clave: f.clave, persona: f.persona, saldo: Math.max(Number(f.saldo), 0) }));
+    .map((f) => ({ clave: f.clave, persona: f.persona, saldo: Math.max(Number(f.saldo), 0), prestado: Number(f.prestado), pagado: Number(f.pagado) }));
 }
 
 export function historialPrestamo(usuario, clave, limite = 5) {
