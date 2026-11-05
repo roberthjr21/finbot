@@ -1,14 +1,30 @@
 import Link from 'next/link'
 import type { ReactNode } from 'react'
-import { BarChart3, Handshake, HandCoins, LayoutDashboard, LogOut, PiggyBank, Sparkles } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, BarChart3, HandCoins, Handshake, LayoutDashboard, LogOut, Menu, PiggyBank, Sparkles, X } from 'lucide-react'
 import { formatearFecha, formatearMonto, type Resultado } from '@/lib/bot-api'
 
-const enlaces = [
-  { href: '/', etiqueta: 'Resumen', Icono: LayoutDashboard },
-  { href: '/movimientos', etiqueta: 'Movimientos', Icono: BarChart3 },
-  { href: '/presupuestos', etiqueta: 'Presupuestos', Icono: PiggyBank },
-  { href: '/deudas', etiqueta: 'Deudas', Icono: HandCoins },
-  { href: '/prestamos', etiqueta: 'Préstamos', Icono: Handshake },
+// Solo rutas que existen. Ingresos y Gastos son filtros del listado de movimientos.
+const secciones = [
+  {
+    titulo: 'PRINCIPAL',
+    enlaces: [
+      { href: '/', etiqueta: 'Resumen', Icono: LayoutDashboard },
+      { href: '/movimientos', etiqueta: 'Movimientos', Icono: BarChart3 },
+      { href: '/movimientos?tipo=ingreso', etiqueta: 'Ingresos', Icono: ArrowDownLeft },
+      { href: '/movimientos?tipo=gasto', etiqueta: 'Gastos', Icono: ArrowUpRight },
+    ],
+  },
+  {
+    titulo: 'PLANIFICACIÓN',
+    enlaces: [{ href: '/presupuestos', etiqueta: 'Presupuestos', Icono: PiggyBank }],
+  },
+  {
+    titulo: 'LIBRETA',
+    enlaces: [
+      { href: '/deudas', etiqueta: 'Deudas', Icono: HandCoins },
+      { href: '/prestamos', etiqueta: 'Préstamos', Icono: Handshake },
+    ],
+  },
 ]
 
 export function DashboardShell({
@@ -19,22 +35,30 @@ export function DashboardShell({
 }: Readonly<{ children: ReactNode; pagina: string; salud?: Resultado<{ ok: true }>; consultado?: string }>) {
   return (
     <div className="app-shell">
+      {/* Menú móvil sin JavaScript: la casilla abre y cierra la barra lateral */}
+      <input id="menu-movil" className="menu-toggle" type="checkbox" aria-hidden="true" tabIndex={-1} />
+      <label htmlFor="menu-movil" className="menu-scrim" aria-hidden="true" />
       <aside className="sidebar">
         <div className="brand-row">
           <div className="brand-mark"><Sparkles size={18} /></div>
           <span>FinBot<span className="brand-muted"> Finance</span></span>
+          <label htmlFor="menu-movil" className="menu-close" aria-label="Cerrar menú"><X size={18} /></label>
         </div>
-        <div className="workspace-label">TUS FINANZAS</div>
         <nav className="nav-list" aria-label="Navegación principal">
-          {enlaces.map(({ href, etiqueta, Icono }) => (
-            <Link
-              key={href}
-              href={href}
-              className={pagina === etiqueta ? 'nav-item active' : 'nav-item'}
-              aria-current={pagina === etiqueta ? 'page' : undefined}
-            >
-              <Icono size={17} /> <span>{etiqueta}</span>
-            </Link>
+          {secciones.map((seccion) => (
+            <div className="nav-group" key={seccion.titulo}>
+              <div className="workspace-label">{seccion.titulo}</div>
+              {seccion.enlaces.map(({ href, etiqueta, Icono }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className={pagina === etiqueta ? 'nav-item active' : 'nav-item'}
+                  aria-current={pagina === etiqueta ? 'page' : undefined}
+                >
+                  <Icono size={17} /> <span>{etiqueta}</span>
+                </Link>
+              ))}
+            </div>
           ))}
         </nav>
         <div className="sidebar-bottom">
@@ -46,6 +70,7 @@ export function DashboardShell({
       </aside>
       <main className="main-content">
         <header className="topbar">
+          <label htmlFor="menu-movil" className="menu-button" aria-label="Abrir menú"><Menu size={20} /></label>
           <div className="breadcrumb"><span>FinBot</span><span>/</span><strong>{pagina}</strong></div>
           <form method="post" action="/api/auth/salir">
             <button className="link-button" type="submit"><LogOut size={14} /> Cerrar sesión</button>
