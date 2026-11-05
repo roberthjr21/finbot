@@ -13,13 +13,15 @@ export function origenValido(request: Request) {
   }
 }
 
-// IP del visitante, para los límites del bot. Detrás de Cloudflare viene en cf-connecting-ip.
+// IP del visitante, para los límites del bot.
+// En Vercel, x-vercel-forwarded-for lo pone la plataforma y el cliente no puede falsificarlo.
+// Detrás de Cloudflare (sin Vercel) viene en cf-connecting-ip.
 export function ipCliente(request: Request) {
-  return (
-    request.headers.get('cf-connecting-ip') ??
-    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
-    '?'
-  ).slice(0, 64)
+  const h = request.headers
+  const ip = process.env.VERCEL
+    ? (h.get('x-vercel-forwarded-for') ?? h.get('x-real-ip'))
+    : (h.get('cf-connecting-ip') ?? h.get('x-forwarded-for')?.split(',')[0]?.trim())
+  return (ip ?? '?').slice(0, 64)
 }
 
 export function cookieSegura(request: Request) {
