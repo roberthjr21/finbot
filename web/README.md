@@ -32,7 +32,15 @@ pnpm build
 
 El navegador solo recibe el HTML renderizado por Next.js. El servidor Next.js hace las consultas HTTPS al API con el token; `BOT_API_URL` y `BOT_API_TOKEN` son variables privadas y nunca deben publicarse en el cliente.
 
-La arquitectura de red para despliegue aún debe decidirse. En Vercel configura una URL HTTPS privada que pueda alcanzar el servidor del bot mediante un túnel privado, o ejecuta el bot en un servidor siempre encendido y accesible por HTTPS. Una dirección loopback como `127.0.0.1` solo apunta al mismo equipo del proceso web y no sirve para llegar desde Vercel al equipo donde se ejecuta el bot.
+### Despliegue en Vercel
+
+- **Root Directory:** `web` · **Framework:** Next.js · **Install:** `pnpm install` · **Build:** `pnpm build` (Vercel los detecta solos; la versión de pnpm sale de `packageManager`).
+- **Variables privadas** (Production y Preview; no marques ninguna como pública):
+  - `BOT_API_URL`: URL **HTTPS** que llegue al bot, sin barra final ni parámetros. `http://` solo se acepta para localhost.
+  - `BOT_API_TOKEN`: exactamente la `API_TOKEN` del `.env` del bot.
+- No hacen falta más variables. `DASHBOARD_USER` y `DASHBOARD_PASSWORD` ya no existen: el acceso es por código de WhatsApp.
+- **El bot no se despliega en Vercel** (necesita proceso siempre activo, sesión de WhatsApp y SQLite en disco). Debe estar en un equipo o servidor encendido y exponerse por HTTPS: un túnel (p. ej. Cloudflare Tunnel hacia `http://127.0.0.1:3001`) o un servidor propio con proxy HTTPS. Mientras ese equipo esté apagado, la web mostrará «sin conexión con el bot».
+- Quien conozca la URL pública del bot puede intentar llegar a su API; la protege `API_TOKEN`. Usa un token largo y aleatorio (32+ caracteres) y no publiques la URL.
 
 ## Inicio de sesión (código por WhatsApp)
 
