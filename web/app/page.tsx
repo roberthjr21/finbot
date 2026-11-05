@@ -1,12 +1,13 @@
 import Link from 'next/link'
 import { ArrowDownLeft, ArrowUpRight } from 'lucide-react'
 import { DashboardShell, EstadoConexion, FormatoFecha, FormatoMonto, ImporteMovimiento } from '@/components/dashboard-shell'
-import { obtenerCategorias, obtenerDeudas, obtenerMovimientos, obtenerPresupuestos, obtenerResumen, obtenerSalud, obtenerSaldo } from '@/lib/bot-api'
+import { obtenerCategorias, obtenerDeudas, obtenerMovimientos, obtenerPrestamos, obtenerPresupuestos, obtenerResumen, obtenerSalud, obtenerSaldo } from '@/lib/bot-api'
 
 export default async function Page() {
-  const [saldo, deudas, resumen, movimientos, presupuestos, categorias, salud] = await Promise.all([
+  const [saldo, deudas, prestamos, resumen, movimientos, presupuestos, categorias, salud] = await Promise.all([
     obtenerSaldo(),
     obtenerDeudas(),
+    obtenerPrestamos(),
     obtenerResumen(),
     obtenerMovimientos(),
     obtenerPresupuestos(),
@@ -30,7 +31,7 @@ export default async function Page() {
             <article className="stat-card"><div className="stat-top"><span>Balance del mes</span></div><strong><FormatoMonto valor={resumen.datos.balance} /></strong></article>
           </section>
       </>}
-      {(resumen.ok || presupuestos.ok || categorias.ok || deudas.ok) && <section className="charts-grid">
+      {(resumen.ok || presupuestos.ok || categorias.ok || deudas.ok || prestamos.ok) && <section className="charts-grid">
         {resumen.ok && <article className="panel">
           <div className="panel-heading"><div><h2>Gastos por categoría</h2><p>{resumen.datos.mes}</p></div></div>
           {resumen.datos.porCategoria.length === 0
@@ -48,6 +49,20 @@ export default async function Page() {
           {deudas.datos.total === 0
             ? <p className="subheading">No debes nada a nadie.</p>
             : <ul className="data-list">{deudas.datos.personas.filter((p) => p.saldo > 0).slice(0, 5).map((p) => <li key={p.persona}><span>{p.persona}</span><strong><FormatoMonto valor={p.saldo} /></strong></li>)}</ul>}
+        </article>}
+        {resumen.ok && (resumen.datos.prestado > 0 || resumen.datos.cobrado > 0 || resumen.datos.pagosDeuda > 0) && <article className="panel">
+          <div className="panel-heading"><div><h2>Aparte del mes</h2><p>No cuentan como ingreso ni gasto, pero sí mueven tu saldo</p></div></div>
+          <ul className="data-list">
+            {resumen.datos.prestado > 0 && <li><span>Prestado (sale de tu saldo)</span><strong>−<FormatoMonto valor={resumen.datos.prestado} /></strong></li>}
+            {resumen.datos.cobrado > 0 && <li><span>Cobrado de préstamos (entra a tu saldo)</span><strong>+<FormatoMonto valor={resumen.datos.cobrado} /></strong></li>}
+            {resumen.datos.pagosDeuda > 0 && <li><span>Pagos de deudas (salen de tu saldo)</span><strong>−<FormatoMonto valor={resumen.datos.pagosDeuda} /></strong></li>}
+          </ul>
+        </article>}
+        {prestamos.ok && <article className="panel">
+          <div className="panel-heading"><div><h2>Préstamos</h2><p>{prestamos.datos.total > 0 ? 'Lo que te deben hoy' : 'Nadie te debe nada'}</p></div><Link className="link-button" href="/prestamos">Ver préstamos</Link></div>
+          {prestamos.datos.total === 0
+            ? <p className="subheading">No tienes cobros pendientes.</p>
+            : <ul className="data-list">{prestamos.datos.personas.filter((p) => p.saldo > 0).slice(0, 5).map((p) => <li key={p.persona}><span>{p.persona}</span><strong><FormatoMonto valor={p.saldo} /></strong></li>)}</ul>}
         </article>}
         {categorias.ok && <article className="panel">
           <div className="panel-heading"><div><h2>Categorías</h2><p>Disponibles en el bot</p></div></div>

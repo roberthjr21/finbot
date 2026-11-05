@@ -17,6 +17,10 @@ export type Resumen = {
   ingresos: number
   gastos: number
   balance: number
+  // Aparte: no cuentan como ingreso ni gasto, pero sí mueven el saldo en mano
+  prestado: number
+  cobrado: number
+  pagosDeuda: number
   porCategoria: Array<{ categoria: string; total: number }>
 }
 
@@ -120,6 +124,9 @@ export async function obtenerResumen(mes = mesActual()): Promise<Resultado<Resum
     return typeof valor.mes === 'string' && typeof valor.ingresos === 'number' && Number.isSafeInteger(valor.ingresos) && valor.ingresos >= 0 &&
       typeof valor.gastos === 'number' && Number.isSafeInteger(valor.gastos) && valor.gastos >= 0 &&
       typeof valor.balance === 'number' && Number.isSafeInteger(valor.balance) &&
+      Number.isSafeInteger(valor.prestado) && (valor.prestado as number) >= 0 &&
+      Number.isSafeInteger(valor.cobrado) && (valor.cobrado as number) >= 0 &&
+      Number.isSafeInteger(valor.pagosDeuda) && (valor.pagosDeuda as number) >= 0 &&
       Array.isArray(valor.porCategoria) && valor.porCategoria.every((fila) =>
         !!fila && typeof fila === 'object' && typeof (fila as Record<string, unknown>).categoria === 'string' &&
         Number.isSafeInteger((fila as Record<string, unknown>).total) && (fila as Record<string, number>).total >= 0)
@@ -169,6 +176,14 @@ export type DeudaPersona = {
   historial: Array<{ tipo: 'debo' | 'abono'; monto: number; descripcion: string; fecha: string }>
 }
 export type Deudas = { total: number; personas: DeudaPersona[] }
+export type PrestamoPersona = {
+  persona: string
+  prestado: number
+  pagado: number
+  saldo: number
+  historial: Array<{ tipo: 'presto' | 'pago'; monto: number; descripcion: string; fecha: string }>
+}
+export type Prestamos = { total: number; prestado: number; pagado: number; personas: PrestamoPersona[] }
 
 export async function obtenerYo(): Promise<Resultado<{ telefono: string }>> {
   return consultar('/api/yo', (dato): dato is { telefono: string } =>
@@ -198,5 +213,25 @@ export async function obtenerDeudas(): Promise<Resultado<Deudas>> {
             typeof mov.descripcion === 'string' && typeof mov.fecha === 'string'
         })
     })
+  })
+}
+
+export async function obtenerPrestamos(): Promise<Resultado<Prestamos>> {
+  return consultar('/api/prestamos', (dato): dato is Prestamos => {
+    if (!dato || typeof dato !== 'object') return false
+    const valor = dato as Record<string, unknown>
+    return Number.isSafeInteger(valor.total) && Number.isSafeInteger(valor.prestado) && Number.isSafeInteger(valor.pagado) &&
+      Array.isArray(valor.personas) && valor.personas.every((p) => {
+        if (!p || typeof p !== 'object') return false
+        const fila = p as Record<string, unknown>
+        return typeof fila.persona === 'string' && Number.isSafeInteger(fila.prestado) && Number.isSafeInteger(fila.pagado) &&
+          Number.isSafeInteger(fila.saldo) && Array.isArray(fila.historial) &&
+          fila.historial.every((h) => {
+            if (!h || typeof h !== 'object') return false
+            const mov = h as Record<string, unknown>
+            return (mov.tipo === 'presto' || mov.tipo === 'pago') && Number.isSafeInteger(mov.monto) &&
+              typeof mov.descripcion === 'string' && typeof mov.fecha === 'string'
+          })
+      })
   })
 }
