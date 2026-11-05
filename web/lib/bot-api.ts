@@ -86,6 +86,24 @@ function mesActual() {
   return `${año}-${mes}`
 }
 
+// Los últimos n meses (AAAA-MM), del más antiguo al actual, en hora de Bogotá
+export function mesesRecientes(n: number, desde = mesActual()) {
+  let [año, mes] = desde.split('-').map(Number)
+  const lista: string[] = []
+  for (let i = 0; i < n; i++) {
+    lista.unshift(`${año}-${String(mes).padStart(2, '0')}`)
+    mes -= 1
+    if (mes === 0) { mes = 12; año -= 1 }
+  }
+  return lista
+}
+
+export function nombreMes(mes: string, formato: 'corto' | 'largo' = 'corto') {
+  const fecha = new Date(`${mes}-15T12:00:00Z`)
+  if (Number.isNaN(fecha.getTime())) return mes
+  return new Intl.DateTimeFormat('es-CO', { month: formato === 'corto' ? 'short' : 'long', timeZone: 'UTC' }).format(fecha).replace('.', '')
+}
+
 function fechaValida(fecha: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return false
   const valor = new Date(`${fecha}T12:00:00Z`)
