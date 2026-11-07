@@ -16,8 +16,11 @@ export default async function PrestamosPage() {
             <article className="stat-card"><div className="stat-top"><span>Total prestado</span></div><strong><FormatoMonto valor={prestamos.datos.prestado} /></strong></article>
             <article className="stat-card"><div className="stat-top"><span>Total cobrado</span></div><strong><FormatoMonto valor={prestamos.datos.pagado} /></strong></article>
           </section>
-          {prestamos.datos.personas.map((p) => (
-            <section className="panel" key={p.persona}>
+          {prestamos.datos.personas.every((p) => p.saldo === 0) && (
+            <section className="panel"><h2>✅ Nadie te debe nada</h2><p className="subheading">Todos tus préstamos ya fueron pagados. Abajo puedes ver el historial.</p></section>
+          )}
+          {[...prestamos.datos.personas.filter((p) => p.saldo > 0), ...prestamos.datos.personas.filter((p) => p.saldo === 0)].map((p) => (
+            <section className={p.saldo === 0 ? 'panel panel-paid' : 'panel'} key={p.persona}>
               <div className="panel-heading">
                 <div><h2>{p.persona}</h2><p>Prestado <FormatoMonto valor={p.prestado} /> · Pagado <FormatoMonto valor={p.pagado} /></p></div>
                 <strong>{p.saldo > 0 ? <><FormatoMonto valor={p.saldo} /> por cobrar</> : '✅ Al día'}</strong>

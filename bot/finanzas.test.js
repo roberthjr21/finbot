@@ -195,3 +195,21 @@ test('origen del movimiento: préstamo, cobro y abono se identifican por su vín
   // Los saldos de A no cambiaron
   assert.equal(finanzas.caja(A, HOY).balance, 730000);
 });
+
+test('"ya me pagaron" sin decir quién: se asume la única persona que te debe, y el préstamo queda en 0', () => {
+  const U = '573009990004';
+  run(U, 'registrar_movimiento', { tipo: 'ingreso', monto: 100000, categoria: 'Salario' });
+  // Sin préstamos pendientes no inventa nada
+  assert.match(run(U, 'registrar_pago_recibido', { todo: true }), /Dime quién te pagó/);
+  run(U, 'registrar_prestamo', { persona: 'Ana', monto: 20000 });
+  assert.equal(finanzas.prestamos(U).total, 20000);
+  assert.match(run(U, 'registrar_pago_recibido', { todo: true }), /Ana te pagó \$20\.000[\s\S]*Ya te pagó todo/);
+  assert.equal(finanzas.prestamos(U).total, 0);
+  assert.equal(finanzas.caja(U, HOY).balance, 100000);
+  assert.match(run(U, 'consultar_prestamos', {}), /Nadie te debe nada/);
+  // Con dos personas debiendo, pregunta en vez de adivinar
+  run(U, 'registrar_prestamo', { persona: 'Luis', monto: 5000 });
+  run(U, 'registrar_prestamo', { persona: 'Eva', monto: 7000 });
+  assert.match(run(U, 'registrar_pago_recibido', { todo: true }), /¿Quién te pagó: .*Luis.*Eva|¿Quién te pagó: .*Eva.*Luis/);
+  assert.equal(finanzas.prestamos(U).total, 12000);
+});
