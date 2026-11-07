@@ -245,8 +245,14 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
 
     // "Pedro me pagó 20 mil": la plata vuelve a tu saldo (ingreso en Préstamos) y baja lo que te debe.
     case 'registrar_pago_recibido': {
-      const persona = nombrePersona(datos.persona);
-      if (!db.clavePersona(persona)) return '⚠️ Dime quién te pagó y cuánto, por ejemplo: "Pedro me pagó 20 mil".';
+      let persona = nombrePersona(datos.persona);
+      if (!db.clavePersona(persona)) {
+        // "ya me pagaron" sin decir quién: si solo hay una persona que te debe, es ella
+        const debenle = finanzas.prestamos(usuario).personas;
+        if (debenle.length === 1) persona = debenle[0].persona;
+        else if (debenle.length > 1) return `⚠️ ¿Quién te pagó: ${debenle.map((p) => p.persona).join(', ')}? Dime el nombre, por ejemplo: "${debenle[0].persona} me pagó todo".`;
+        else return '⚠️ Dime quién te pagó y cuánto, por ejemplo: "Pedro me pagó 20 mil".';
+      }
       const encontrada = buscarPersona(usuario, persona, db.resumenPrestamos);
       if (encontrada.ambigua) return `⚠️ ¿A cuál te refieres: ${encontrada.ambigua.join(' o ')}? Dime el nombre completo.`;
       if (!encontrada.persona) return `No tengo ningún préstamo anotado con ${persona}. Si le prestaste plata, dime por ejemplo: "le presté 50 mil a ${persona}".`;
