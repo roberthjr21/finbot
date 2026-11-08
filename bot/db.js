@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { normalizar } from './categorias.js';
+import { migrar } from './migraciones.js';
 
 // Un solo archivo (finanzas.db). Los montos se guardan como pesos enteros.
 const archivoDB = process.env.DB_ARCHIVO ?? 'finanzas.db';
@@ -126,6 +127,9 @@ db.exec(`
   UNION SELECT usuario FROM presupuestos
   UNION SELECT usuario FROM deudas;
 `);
+
+// Migraciones versionadas (tablas nuevas, siempre aditivas y con copia verificada antes)
+migrar(db, archivoDB);
 
 // --- Mensajes ya atendidos (para no registrar dos veces lo mismo) ---
 export function yaProcesado(id) {
