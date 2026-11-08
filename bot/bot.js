@@ -21,6 +21,7 @@ import { temaDeGuia } from './consejos.js';
 import { tieneDecimalConPunto } from './montos.js';
 import { crearLimitador, entero } from './limites.js';
 import * as acceso from './acceso.js';
+import { programarRespaldos } from './respaldos.js';
 import { soloNumero, numeroValido, esChatIndividual, identificarRemitente } from './identidad.js';
 
 // ==========================================
@@ -674,6 +675,9 @@ async function apagar(signal) {
 
 process.once('SIGINT', () => { void apagar('SIGINT'); });
 process.once('SIGTERM', () => { void apagar('SIGTERM'); });
+
+// Respaldos periódicos verificados de la base (ver RESPALDO_* en .env.example)
+programarRespaldos(process.env.DB_ARCHIVO ?? 'finanzas.db');
 
 iniciar().catch((e) => {
   console.error('No se pudo iniciar el bot:', e);

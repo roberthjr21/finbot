@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { normalizar } from './categorias.js';
+import { migrar } from './migraciones.js';
 
 // Un solo archivo (finanzas.db). Los montos se guardan como pesos enteros.
 const archivoDB = process.env.DB_ARCHIVO ?? 'finanzas.db';
@@ -127,6 +128,9 @@ db.exec(`
   UNION SELECT usuario FROM deudas;
 `);
 
+// Migraciones versionadas (tablas nuevas, siempre aditivas y con copia verificada antes)
+migrar(db, archivoDB);
+
 // --- Mensajes ya atendidos (para no registrar dos veces lo mismo) ---
 export function yaProcesado(id) {
   return Boolean(db.prepare('SELECT 1 FROM procesados WHERE id = ?').get(id));
@@ -216,6 +220,51 @@ export function borrarMovimiento(usuario, id) {
     db.prepare('DELETE FROM prestamos WHERE usuario = ? AND movimiento_id = ?').run(usuario, id);
   }
   return resultado.changes ? fila : null;
+}
+
+// --- Escritura desde la web: siempre acotada al usuario de la sesión ---
+export function obtenerMovimiento(usuario, id) {
+  return db.prepare(
+    `SELECT id, tipo, monto, categoria, descripcion, fecha,
+            EXISTS (SELECT 1 FROM prestamos p WHERE p.usuario = movimientos.usuario AND p.movimiento_id = movimientos.id)
+         OR EXISTS (SELECT 1 FROM deudas d WHERE d.usuario = movimientos.usuario AND d.movimiento_id = movimientos.id AND d.tipo <> 'debo') AS ligado
+       FROM movimientos WHERE usuario = ? AND id = ?`,
+  ).get(usuario, id) ?? null;
+}
+
+export function registrarAuditoria({ usuario, accion, entidad, entidadId = null, origen = 'bot', detalle = null }) {
+  db.prepare('INSERT INTO auditoria (usuario, accion, entidad, entidad_id, origen, detalle) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(usuario, accion, entidad, entidadId, origen, detalle ? JSON.stringify(detalle).slice(0, 2000) : null);
+}
+
+export function listarAuditoria(usuario, limite = 50) {
+  return db.prepare('SELECT id, accion, entidad, entidad_id, origen, detalle, creada_en FROM auditoria WHERE usuario = ? ORDER BY id DESC LIMIT ?')
+    .all(usuario, Math.min(Math.max(Number(limite) || 50, 1), 200));
+}
+
+// Actualiza solo los campos recibidos. Devuelve {antes, despues}, o null si no existe o es de otra cuenta.
+export function editarMovimiento(usuario, id, cambios, origen = 'web') {
+  return enTransaccion(() => {
+    const antes = obtenerMovimiento(usuario, id);
+    if (!antes) return null;
+    const campos = ['tipo', 'monto', 'categoria', 'descripcion', 'fecha'].filter((c) => cambios[c] !== undefined);
+    db.prepare(`UPDATE movimientos SET ${campos.map((c) => `${c} = ?`).join(', ')} WHERE usuario = ? AND id = ?`)
+      .run(...campos.map((c) => cambios[c]), usuario, id);
+    const despues = obtenerMovimiento(usuario, id);
+    registrarAuditoria({ usuario, accion: 'editar', entidad: 'movimiento', entidadId: id, origen, detalle: { antes: { ...antes, ligado: undefined }, despues: { ...despues, ligado: undefined } } });
+    return { antes, despues };
+  });
+}
+
+// Borra un movimiento propio sin límite de tiempo (el /deshacer del chat solo alcanza las últimas 24 h).
+export function eliminarMovimiento(usuario, id, origen = 'web') {
+  return enTransaccion(() => {
+    const fila = obtenerMovimiento(usuario, id);
+    if (!fila) return null;
+    db.prepare('DELETE FROM movimientos WHERE usuario = ? AND id = ?').run(usuario, id);
+    registrarAuditoria({ usuario, accion: 'eliminar', entidad: 'movimiento', entidadId: id, origen, detalle: { ...fila, ligado: undefined } });
+    return fila;
+  });
 }
 
 // Totales de ingresos y gastos, y gastos por categoría, entre dos fechas

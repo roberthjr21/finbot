@@ -50,6 +50,13 @@ En una instalación local, la API utiliza por defecto `http://127.0.0.1:3001`. L
 
 **Importante:** `API_TOKEN` y `BOT_API_TOKEN` deben coincidir. No publiques estos valores ni los incluyas en variables `NEXT_PUBLIC_*`.
 
+## Migraciones y respaldos
+
+- La base usa **migraciones versionadas** (`bot/migraciones.js`, tabla `schema_migraciones`). Solo se agregan cambios aditivos. Si hay una migración pendiente y la base tiene datos, antes se guarda una **copia verificada** (`finanzas.db.antes-vN-<fecha>.db`); si la copia falla, el bot no migra.
+- El bot hace **respaldos automáticos** al arrancar y cada `RESPALDO_CADA_HORAS` horas (por defecto 24), en `respaldos/` junto a la base. Se conservan los últimos `RESPALDO_CONSERVAR` (7). Cada copia se verifica antes de guardarse.
+- **Respaldo manual:** `node db-admin.js backup finanzas.db respaldos/manual.db`
+- **Restaurar** (con el bot detenido; nunca sobrescribe): `node db-admin.js restore respaldos/<copia>.db finanzas-restaurada.db`, revisa que todo esté bien y luego reemplaza `finanzas.db` por ese archivo.
+
 ## Cómo se calculan las cifras
 
 Todo está en `bot/finanzas.js` (una sola fuente para el bot, el análisis, los consejos y la API):

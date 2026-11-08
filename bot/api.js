@@ -7,6 +7,8 @@ import * as finanzas from './finanzas.js';
 import { CATEGORIAS } from './categorias.js';
 import { fechaBogota, rangoMes, valida } from './fechas.js';
 import * as acceso from './acceso.js';
+import { validarMovimiento } from './movimientos.js';
+import { crearLimitador, entero } from './limites.js';
 
 // =====================================================
 // CONFIGURACIÓN
@@ -23,6 +25,7 @@ export function crearServidorApi({ enviar } = {}) {
     return null;
   }
 
+  const limiteEscrituras = crearLimitador({ max: entero('MAX_ESCRITURAS_MINUTO', 30), ventanaMs: 60_000 });
   const puerto = Number(process.env.API_PUERTO ?? 3001);
   const host = process.env.API_HOST ?? '127.0.0.1';
   const origenConfigurado =
@@ -121,6 +124,49 @@ export function crearServidorApi({ enviar } = {}) {
       case '/interno/salir': {
         acceso.cerrarSesion(cuerpo.token);
         responder(res, 200, { ok: true }, cabeceras);
+        return;
+      }
+      case '/interno/movimientos/crear':
+      case '/interno/movimientos/editar':
+      case '/interno/movimientos/eliminar': {
+        // La cuenta sale SIEMPRE de la sesión (X-Sesion), nunca del cuerpo de la petición.
+        const sesion = acceso.validarSesion(req.headers['x-sesion']);
+        if (!sesion) { responder(res, 401, { ok: false, error: 'Sesión no válida' }, cabeceras); return; }
+        const usuario = sesion.telefono;
+        if (!limiteEscrituras.intentar(usuario).ok) { responder(res, 429, { ok: false, error: 'Demasiadas operaciones seguidas. Espera un momento.' }, cabeceras); return; }
+        const accion = ruta.split('/').pop();
+
+        if (accion === 'crear') {
+          const clave = cuerpo.clave;
+          if (typeof clave !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(clave)) { responder(res, 400, { ok: false, error: 'Falta la clave de la operación.' }, cabeceras); return; }
+          const v = validarMovimiento(cuerpo);
+          if (!v.ok) { responder(res, 400, v, cabeceras); return; }
+          // Misma clave = misma operación: un reintento o doble clic no crea otro movimiento
+          const id = db.enTransaccion(() => {
+            const nuevo = db.agregarMovimiento({ usuario, ...v.valor, mensajeId: `web:${usuario}:${clave}` });
+            if (nuevo !== null) db.registrarAuditoria({ usuario, accion: 'crear', entidad: 'movimiento', entidadId: nuevo, origen: 'web', detalle: v.valor });
+            return nuevo;
+          });
+          responder(res, id === null ? 200 : 201, id === null ? { ok: true, duplicado: true } : { ok: true, id }, cabeceras);
+          return;
+        }
+
+        const id = cuerpo.id;
+        if (!Number.isSafeInteger(id) || id <= 0) { responder(res, 400, { ok: false, error: 'Movimiento no válido.' }, cabeceras); return; }
+        const actual = db.obtenerMovimiento(usuario, id);
+        if (!actual) { responder(res, 404, { ok: false, error: 'No existe ese movimiento.' }, cabeceras); return; }
+        if (actual.ligado) { responder(res, 409, { ok: false, error: 'Este movimiento pertenece a un préstamo o a una deuda: se modifica desde esa sección.' }, cabeceras); return; }
+
+        if (accion === 'editar') {
+          const v = validarMovimiento(cuerpo.cambios, { parcial: true });
+          if (!v.ok) { responder(res, 400, v, cabeceras); return; }
+          const r = db.editarMovimiento(usuario, id, v.valor);
+          responder(res, r ? 200 : 404, r ? { ok: true } : { ok: false, error: 'No existe ese movimiento.' }, cabeceras);
+          return;
+        }
+
+        const borrado = db.eliminarMovimiento(usuario, id);
+        responder(res, borrado ? 200 : 404, borrado ? { ok: true } : { ok: false, error: 'No existe ese movimiento.' }, cabeceras);
         return;
       }
       default:
@@ -226,6 +272,15 @@ export function crearServidorApi({ enviar } = {}) {
         // ---------------------------------------------
         // Comprobar que la API está activa
         // ---------------------------------------------
+
+        // Un movimiento propio (para editarlo en la web). Si es de otra cuenta responde igual que si no existiera.
+        case '/api/movimiento': {
+          const id = Number(parametros.get('id'));
+          const fila = Number.isSafeInteger(id) && id > 0 ? db.obtenerMovimiento(usuario, id) : null;
+          if (!fila) { responder(res, 404, { error: 'No existe ese movimiento' }, cabeceras); return; }
+          responder(res, 200, { ...fila, ligado: Boolean(fila.ligado) }, cabeceras);
+          return;
+        }
 
         case '/api/salud': {
           responder(
