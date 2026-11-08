@@ -184,3 +184,14 @@ test('límite de operaciones por minuto', async () => {
   assert.ok(estados.includes(429));
   assert.equal(estados.filter((e) => e === 201).length, 12);
 });
+
+test('GET /api/movimiento: devuelve el propio y da 404 para el de otra cuenta', async () => {
+  const { cuerpo } = await post('/interno/movimientos/crear', nuevo({ descripcion: 'solo mío' }), tA);
+  const propio = await fetch(`${base}/api/movimiento?id=${cuerpo.id}`, { headers: { Authorization: 'Bearer secreto-de-prueba', 'X-Sesion': tA } });
+  assert.equal(propio.status, 200);
+  assert.equal((await propio.json()).descripcion, 'solo mío');
+  const ajeno = await fetch(`${base}/api/movimiento?id=${cuerpo.id}`, { headers: { Authorization: 'Bearer secreto-de-prueba', 'X-Sesion': tB } });
+  assert.equal(ajeno.status, 404);
+  const basura = await fetch(`${base}/api/movimiento?id=abc`, { headers: { Authorization: 'Bearer secreto-de-prueba', 'X-Sesion': tA } });
+  assert.equal(basura.status, 404);
+});

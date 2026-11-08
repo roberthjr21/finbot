@@ -273,6 +273,15 @@ export function crearServidorApi({ enviar } = {}) {
         // Comprobar que la API está activa
         // ---------------------------------------------
 
+        // Un movimiento propio (para editarlo en la web). Si es de otra cuenta responde igual que si no existiera.
+        case '/api/movimiento': {
+          const id = Number(parametros.get('id'));
+          const fila = Number.isSafeInteger(id) && id > 0 ? db.obtenerMovimiento(usuario, id) : null;
+          if (!fila) { responder(res, 404, { error: 'No existe ese movimiento' }, cabeceras); return; }
+          responder(res, 200, { ...fila, ligado: Boolean(fila.ligado) }, cabeceras);
+          return;
+        }
+
         case '/api/salud': {
           responder(
             res,

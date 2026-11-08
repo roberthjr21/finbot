@@ -9,6 +9,8 @@ export type Movimiento = {
   categoria: string
   descripcion: string
   fecha: string
+  // De dónde viene: préstamo, cobro o abono a deuda (se editan en su sección); null si es un movimiento normal
+  origen?: 'prestamo' | 'cobro' | 'abono_deuda' | null
 }
 export type Resumen = {
   mes: string
@@ -251,5 +253,23 @@ export async function obtenerPrestamos(): Promise<Resultado<Prestamos>> {
               typeof mov.descripcion === 'string' && typeof mov.fecha === 'string'
           })
       })
+  })
+}
+
+// Fecha de hoy (AAAA-MM-DD) en hora de Bogotá
+export function hoyBogota() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(new Date())
+}
+
+export type MovimientoDetalle = Movimiento & { ligado: boolean }
+
+export async function obtenerMovimiento(id: number): Promise<Resultado<MovimientoDetalle>> {
+  if (!Number.isSafeInteger(id) || id <= 0) return { ok: false, motivo: 'conexion' }
+  return consultar(`/api/movimiento?id=${id}`, (dato): dato is MovimientoDetalle => {
+    if (!dato || typeof dato !== 'object') return false
+    const valor = dato as Record<string, unknown>
+    return Number.isSafeInteger(valor.id) && (valor.tipo === 'gasto' || valor.tipo === 'ingreso') &&
+      Number.isSafeInteger(valor.monto) && typeof valor.categoria === 'string' && typeof valor.descripcion === 'string' &&
+      typeof valor.fecha === 'string' && typeof valor.ligado === 'boolean'
   })
 }
