@@ -61,3 +61,38 @@ export function pesos(n) {
   const entero = Math.round(Number(n) || 0);
   return `${entero < 0 ? '-' : ''}$${Math.abs(entero).toLocaleString('es-CO')}`;
 }
+
+// "hoy", "mañana", "pasado mañana", "2026-12-05", "05/12", "05/12/2026" o solo el día del mes ("15").
+// Un día suelto o "DD/MM" ya pasado se toma en el siguiente mes (o año). Devuelve AAAA-MM-DD o null.
+export function fechaDeTexto(texto, hoy) {
+  const t = String(texto ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+  if (t === 'hoy') return hoy;
+  if (t === 'manana') return sumarDias(hoy, 1);
+  if (t === 'pasado manana') return sumarDias(hoy, 2);
+  if (valida(t)) return t;
+  const [a, m] = hoy.split('-').map(Number);
+  const ultimoDia = (anio, mes) => new Date(Date.UTC(anio, mes, 0)).getUTCDate();
+  const armar = (anio, mes, dia) => {
+    const iso = `${anio}-${dos(mes)}-${dos(dia)}`;
+    return valida(iso) ? iso : null;
+  };
+  let c = t.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (c) return armar(Number(c[3]), Number(c[2]), Number(c[1]));
+  c = t.match(/^(\d{1,2})[/-](\d{1,2})$/);
+  if (c) {
+    const iso = armar(a, Number(c[2]), Number(c[1]));
+    if (!iso) return null;
+    return iso >= hoy ? iso : armar(a + 1, Number(c[2]), Number(c[1]));
+  }
+  c = t.match(/^(\d{1,2})$/);
+  if (c) {
+    const dia = Number(c[1]);
+    if (dia < 1 || dia > 31) return null;
+    const esteMes = armar(a, m, Math.min(dia, ultimoDia(a, m)));
+    if (esteMes >= hoy) return esteMes;
+    const anio = m === 12 ? a + 1 : a;
+    const mes = m === 12 ? 1 : m + 1;
+    return armar(anio, mes, Math.min(dia, ultimoDia(anio, mes)));
+  }
+  return null;
+}

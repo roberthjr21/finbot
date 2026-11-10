@@ -57,6 +57,22 @@ En una instalación local, la API utiliza por defecto `http://127.0.0.1:3001`. L
 - **Respaldo manual:** `node db-admin.js backup finanzas.db respaldos/manual.db`
 - **Restaurar** (con el bot detenido; nunca sobrescribe): `node db-admin.js restore respaldos/<copia>.db finanzas-restaurada.db`, revisa que todo esté bien y luego reemplaza `finanzas.db` por ese archivo.
 
+## Recordatorios, recurrentes, metas y alertas (FinBot 2.0, fase 2)
+
+Todo vive en la misma base SQLite (migración v3) y cada persona solo ve lo suyo. El *programador* (`bot/programador.js`) corre dentro del bot cada minuto:
+
+| Función | Comandos de WhatsApp | Notas |
+|---|---|---|
+| Recordatorios | `/recordar mañana pagar arriendo 800000`, `/recordatorios`, `/listo N`, `/cancelarrecordatorio N`, `/editarrecordatorio N 15/12 08:00` | Si el bot estuvo apagado, lo vencido se envía al volver (una sola vez). |
+| Recurrentes | `/recurrente gasto 30000 servicios mensual Netflix`, `/recurrentes`, `/pausar N`, `/reactivar N`, `/eliminarrecurrente N` | *Programado* ≠ *ejecutado*: crear uno no registra nada; cada fecha se registra una sola vez (clave única), aunque el bot se reinicie. Al reactivar no se recupera lo de la pausa. |
+| Metas de ahorro | `/meta Viaje 3000000 200000 mensual`, `/metas`, `/aportar Viaje 50000`, `/retirarmeta Viaje 50000` | Los aportes no crean movimientos: el ahorro no se cuenta dos veces. |
+| Alertas | `/alertas`, `/alertas presupuestos no`, `/alertas silencio 23:00 06:00`, `/alertas maximo 3` | Presupuesto 80/90/100 %, picos y gastos inusuales, pagos próximos, deudas/préstamos de más de 30 días, metas y cierre de mes. Una alerta no se repite, se agrupan en un mensaje y respetan el horario de silencio. Se calculan con código, no con IA. |
+| Contexto | "mejor ponlo en transporte", "era de 30 mil", `sí` / `no` | Guarda solo el último movimiento y confirmaciones pendientes (no el texto), por persona, y vence a los 30 minutos (`CONTEXTO_MINUTOS`). |
+| Notas de voz | Mandar un audio | Se transcribe con Gemini, se muestra lo entendido y **solo se guarda si respondes sí**. |
+| Fotos de recibos | Mandar la foto | Gemini extrae comercio, fecha, total y categoría; el código los valida; pides confirmar. La misma imagen no se registra dos veces y se avisa si ya hay un gasto igual ese día. |
+
+Voz e imágenes requieren `GEMINI_API_KEY` (el mismo de la IA) y se apagan con `MEDIA_ACTIVA=0`. No se guardan audios, imágenes ni transcripciones. Variables nuevas en `bot/.env.example`.
+
 ## Cómo se calculan las cifras
 
 Todo está en `bot/finanzas.js` (una sola fuente para el bot, el análisis, los consejos y la API):

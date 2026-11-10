@@ -3,6 +3,8 @@ import * as finanzas from './finanzas.js';
 import { CATEGORIAS } from './categorias.js';
 import { pesos, rangoMes, rangoPeriodo, valida } from './fechas.js';
 import { montoValido } from './montos.js';
+import { ejecutarFase2 } from './acciones2.js';
+import * as contexto from './contexto.js';
 import { TEMAS_GUIA, configurarConsejos, consejoProactivo, guiaFinanciera } from './consejos.js';
 
 const confirmacionesBorrado = new Map();
@@ -11,7 +13,7 @@ const CONFIRMACION_MS = 2 * 60 * 1000;
 const borradosPendientes = new Map();
 
 const NOMBRE_ALCANCE = {
-  todo: 'TODOS tus datos (movimientos, deudas, préstamos y presupuestos)',
+  todo: 'TODOS tus datos (movimientos, deudas, préstamos, presupuestos, recordatorios, recurrentes y metas)',
   movimientos: 'todos tus movimientos (ingresos y gastos)',
   ingresos: 'todos tus ingresos',
   gastos: 'todos tus gastos',
@@ -26,6 +28,11 @@ function resumenBorrado(c) {
   if (c.deudas) partes.push(`${c.deudas} registro${c.deudas === 1 ? '' : 's'} de deudas`);
   if (c.prestamos) partes.push(`${c.prestamos} registro${c.prestamos === 1 ? '' : 's'} de préstamos`);
   if (c.presupuestos) partes.push(`${c.presupuestos} presupuesto${c.presupuestos === 1 ? '' : 's'}`);
+  if (c.recordatorios) partes.push(`${c.recordatorios} recordatorio${c.recordatorios === 1 ? '' : 's'}`);
+  if (c.recurrentes) partes.push(`${c.recurrentes} recurrente${c.recurrentes === 1 ? '' : 's'}`);
+  if (c.metas) partes.push(`${c.metas} meta${c.metas === 1 ? '' : 's'} de ahorro`);
+  if (c.alertas) partes.push(`${c.alertas} registro${c.alertas === 1 ? '' : 's'} de alertas`);
+  if (c.contexto) partes.push('contexto de conversación');
   return partes.join(', ');
 }
 
@@ -118,6 +125,7 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
         mensajeId: `${mensajeId}:${indice}`,
       });
       if (id === null) return null; // ya estaba registrado
+      contexto.guardar(usuario, { ultimo: { id } }); // para correcciones como "mejor ponlo en transporte"
 
       const etiqueta = datos.tipo === 'gasto' ? '💸 Gasto' : '💰 Ingreso';
       let texto = `${etiqueta} registrado: ${pesos(monto)} en ${categoria}`;
@@ -435,7 +443,9 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
     case 'analizar_gastos':
       return null;
 
-    default:
-      return '⚠️ No supe qué hacer con eso.';
+    default: {
+      const r = ejecutarFase2(accion, { usuario, hoy, mensajeId, indice, efectos }, ejecutar);
+      return r === undefined ? '⚠️ No supe qué hacer con eso.' : r;
+    }
   }
 }

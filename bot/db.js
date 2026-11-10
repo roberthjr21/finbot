@@ -146,18 +146,32 @@ export function marcarProcesado(id) {
 }
 // Las acciones de un mensaje y su marca de idempotencia se confirman juntas.
 // Así, un fallo no deja un lote financiero aplicado a medias.
+// Los mensajes de WhatsApp ya corren dentro de una transacción. Una edición interna
+// requiere un SAVEPOINT, no un segundo BEGIN IMMEDIATE; el BEGIN externo se conserva
+// para reservar el escritor con anticipación y mantener la seguridad de concurrencia.
+let siguienteSavepoint = 0;
 export function enTransaccion(tarea) {
-  db.exec('BEGIN IMMEDIATE');
+  const anidada = db.isTransaction;
+  const nombre = anidada ? `finbot_anidada_${++siguienteSavepoint}` : null;
+  db.exec(anidada ? `SAVEPOINT ${nombre}` : 'BEGIN IMMEDIATE');
   try {
     const resultado = tarea();
-    db.exec('COMMIT');
+    db.exec(anidada ? `RELEASE SAVEPOINT ${nombre}` : 'COMMIT');
     return resultado;
   } catch (error) {
-    try { db.exec('ROLLBACK'); } catch {}
+    if (anidada) {
+      try { db.exec(`ROLLBACK TO SAVEPOINT ${nombre}`); } catch {}
+      try { db.exec(`RELEASE SAVEPOINT ${nombre}`); } catch {}
+    } else {
+      try { db.exec('ROLLBACK'); } catch {}
+    }
     throw error;
   }
 }
 export function cerrarBase() { db.close(); }
+
+// Conexión compartida para los módulos de la fase 2 (recordatorios, metas, etc.)
+export const base = () => db;
 
 // --- Movimientos ---
 // Devuelve el id nuevo, o null si ese mensaje ya estaba registrado
@@ -529,6 +543,16 @@ export function contarBorrado(usuario, alcance) {
     presupuestos: ['todo', 'presupuestos'].includes(alcance)
       ? cuenta('SELECT COUNT(*) AS n FROM presupuestos WHERE usuario = ?', usuario)
       : 0,
+    // /borrar todo debe advertir también sobre los datos de fase 2
+    // incluso cuando el usuario aún no tiene movimientos financieros.
+    recordatorios: alcance === 'todo' ? cuenta('SELECT COUNT(*) AS n FROM recordatorios WHERE usuario = ?', usuario) : 0,
+    recurrentes: alcance === 'todo' ? cuenta('SELECT COUNT(*) AS n FROM recurrentes WHERE usuario = ?', usuario) : 0,
+    metas: alcance === 'todo' ? cuenta('SELECT COUNT(*) AS n FROM metas WHERE usuario = ?', usuario) : 0,
+    alertas: alcance === 'todo'
+      ? cuenta('SELECT COUNT(*) AS n FROM alertas_config WHERE usuario = ?', usuario)
+        + cuenta('SELECT COUNT(*) AS n FROM alertas_enviadas WHERE usuario = ?', usuario)
+      : 0,
+    contexto: alcance === 'todo' ? cuenta('SELECT COUNT(*) AS n FROM contexto WHERE usuario = ?', usuario) : 0,
   };
 }
 
@@ -546,7 +570,17 @@ export function borrarDatos(usuario, alcance) {
   if (['todo', 'prestamos'].includes(alcance)) db.prepare('DELETE FROM prestamos WHERE usuario = ?').run(usuario);
   if (tocaMovimientos(alcance)) db.prepare(`DELETE FROM movimientos WHERE usuario = ? ${filtro}`).run(usuario);
   if (['todo', 'presupuestos'].includes(alcance)) db.prepare('DELETE FROM presupuestos WHERE usuario = ?').run(usuario);
+  if (alcance === 'todo') borrarDatosFase2(usuario);
   return cantidades;
+}
+
+// "Borrar todo" también limpia lo de la fase 2 (recordatorios, recurrentes, metas, alertas y contexto) de esa persona
+function borrarDatosFase2(usuario) {
+  db.prepare('DELETE FROM recurrentes_ejecuciones WHERE recurrente_id IN (SELECT id FROM recurrentes WHERE usuario = ?)').run(usuario);
+  db.prepare('DELETE FROM metas_aportes WHERE usuario = ?').run(usuario);
+  for (const tabla of ['recordatorios', 'recurrentes', 'metas', 'alertas_config', 'alertas_enviadas', 'contexto']) {
+    db.prepare(`DELETE FROM ${tabla} WHERE usuario = ?`).run(usuario);
+  }
 }
 
 // --- Preferencias por persona (por ejemplo, si quiere recibir consejos) ---

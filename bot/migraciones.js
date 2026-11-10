@@ -27,6 +27,105 @@ export const MIGRACIONES = [
       CREATE INDEX IF NOT EXISTS idx_auditoria_usuario ON auditoria (usuario, id DESC);
     `,
   },
+  {
+    version: 3,
+    nombre: 'fase 2: recordatorios, recurrentes, metas, alertas y contexto',
+    sql: `
+      CREATE TABLE IF NOT EXISTS recordatorios (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario    TEXT    NOT NULL,
+        texto      TEXT    NOT NULL,
+        monto      INTEGER CHECK (monto IS NULL OR monto > 0),
+        vence      TEXT    NOT NULL,
+        hora       TEXT    NOT NULL DEFAULT '09:00',
+        estado     TEXT    NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente', 'enviado', 'completado', 'cancelado')),
+        enviado_en TEXT,
+        creado     TEXT    NOT NULL DEFAULT (datetime('now')),
+        mensaje_id TEXT    UNIQUE
+      );
+      CREATE INDEX IF NOT EXISTS idx_recordatorios_usuario ON recordatorios (usuario, estado, vence);
+      CREATE INDEX IF NOT EXISTS idx_recordatorios_estado ON recordatorios (estado, vence);
+
+      CREATE TABLE IF NOT EXISTS recurrentes (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario     TEXT    NOT NULL,
+        tipo        TEXT    NOT NULL CHECK (tipo IN ('gasto', 'ingreso')),
+        monto       INTEGER NOT NULL CHECK (monto > 0),
+        categoria   TEXT    NOT NULL,
+        descripcion TEXT    NOT NULL DEFAULT '',
+        frecuencia  TEXT    NOT NULL CHECK (frecuencia IN ('diaria', 'semanal', 'quincenal', 'mensual')),
+        dia_mes     INTEGER CHECK (dia_mes IS NULL OR (dia_mes BETWEEN 1 AND 31)),
+        proxima     TEXT    NOT NULL,
+        estado      TEXT    NOT NULL DEFAULT 'activo' CHECK (estado IN ('activo', 'pausado', 'eliminado')),
+        creado      TEXT    NOT NULL DEFAULT (datetime('now')),
+        mensaje_id  TEXT    UNIQUE
+      );
+      CREATE INDEX IF NOT EXISTS idx_recurrentes_usuario ON recurrentes (usuario, estado);
+
+      -- "Programado" vive en recurrentes.proxima; "ejecutado" vive aquí. La clave primaria impide ejecutar dos veces la misma fecha.
+      CREATE TABLE IF NOT EXISTS recurrentes_ejecuciones (
+        recurrente_id INTEGER NOT NULL REFERENCES recurrentes (id),
+        fecha         TEXT    NOT NULL,
+        movimiento_id INTEGER,
+        creada        TEXT    NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (recurrente_id, fecha)
+      );
+
+      CREATE TABLE IF NOT EXISTS metas (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        usuario      TEXT    NOT NULL,
+        nombre       TEXT    NOT NULL,
+        objetivo     INTEGER NOT NULL CHECK (objetivo > 0),
+        aporte       INTEGER CHECK (aporte IS NULL OR aporte > 0),
+        frecuencia   TEXT    CHECK (frecuencia IS NULL OR frecuencia IN ('semanal', 'quincenal', 'mensual')),
+        fecha_limite TEXT,
+        estado       TEXT    NOT NULL DEFAULT 'activa' CHECK (estado IN ('activa', 'cumplida', 'cancelada')),
+        creado       TEXT    NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_metas_usuario ON metas (usuario, estado);
+
+      -- Los aportes a metas viven aquí y NO crean movimientos: así el ahorro no se cuenta dos veces.
+      CREATE TABLE IF NOT EXISTS metas_aportes (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        meta_id    INTEGER NOT NULL REFERENCES metas (id),
+        usuario    TEXT    NOT NULL,
+        monto      INTEGER NOT NULL CHECK (monto <> 0),
+        fecha      TEXT    NOT NULL,
+        creado     TEXT    NOT NULL DEFAULT (datetime('now')),
+        mensaje_id TEXT    UNIQUE
+      );
+      CREATE INDEX IF NOT EXISTS idx_metas_aportes ON metas_aportes (meta_id);
+
+      CREATE TABLE IF NOT EXISTS alertas_config (
+        usuario        TEXT    PRIMARY KEY,
+        presupuestos   INTEGER NOT NULL DEFAULT 1,
+        picos          INTEGER NOT NULL DEFAULT 1,
+        pagos          INTEGER NOT NULL DEFAULT 1,
+        deudas         INTEGER NOT NULL DEFAULT 1,
+        metas          INTEGER NOT NULL DEFAULT 1,
+        cierre         INTEGER NOT NULL DEFAULT 1,
+        silencio_desde TEXT    NOT NULL DEFAULT '22:00',
+        silencio_hasta TEXT    NOT NULL DEFAULT '07:00',
+        max_diarias    INTEGER NOT NULL DEFAULT 5 CHECK (max_diarias BETWEEN 1 AND 20)
+      );
+
+      -- Una alerta con la misma clave no se vuelve a enviar (evita repetirla tras reinicios).
+      CREATE TABLE IF NOT EXISTS alertas_enviadas (
+        usuario TEXT NOT NULL,
+        clave   TEXT NOT NULL,
+        dia     TEXT NOT NULL,
+        creada  TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (usuario, clave)
+      );
+
+      -- Contexto de conversación por persona, con vencimiento (milisegundos desde 1970).
+      CREATE TABLE IF NOT EXISTS contexto (
+        usuario     TEXT    PRIMARY KEY,
+        datos       TEXT    NOT NULL,
+        actualizado INTEGER NOT NULL
+      );
+    `,
+  },
 ];
 
 const hayDatos = (db) =>
