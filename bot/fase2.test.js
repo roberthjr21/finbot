@@ -22,6 +22,21 @@ const A = '573001110001';
 const B = '573001110002';
 const HOY = '2026-11-10';
 
+test('transacciones anidadas: savepoint revierte solo la operación interior fallida', () => {
+  const usuario = '573001110060';
+  const id = db.agregarMovimiento({ usuario, tipo: 'gasto', monto: 12000, categoria: 'Comida', descripcion: 'prueba', fecha: HOY, mensajeId: 'nested-original' });
+  db.enTransaccion(() => {
+    assert.throws(() => db.enTransaccion(() => {
+      db.editarMovimiento(usuario, id, { monto: 33000 }, 'bot');
+      throw new Error('fallo interno');
+    }), /fallo interno/);
+    assert.equal(db.obtenerMovimiento(usuario, id).monto, 12000);
+    db.fijarPresupuesto(usuario, 'Comida', 50000);
+  });
+  assert.equal(db.obtenerMovimiento(usuario, id).monto, 12000);
+  assert.equal(db.presupuestoDe(usuario, 'Comida'), 50000);
+});
+
 // ---------- Recordatorios ----------
 test('recordatorios: crear, listar, editar, completar y cancelar, aislados por usuario', () => {
   const r = rec.crear({ usuario: A, texto: 'Pagar arriendo', monto: 800000, vence: '2026-11-15', hora: '08:00' }, { hoy: HOY });
