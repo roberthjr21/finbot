@@ -159,6 +159,9 @@ export function enTransaccion(tarea) {
 }
 export function cerrarBase() { db.close(); }
 
+// Conexión compartida para los módulos de la fase 2 (recordatorios, metas, etc.)
+export const base = () => db;
+
 // --- Movimientos ---
 // Devuelve el id nuevo, o null si ese mensaje ya estaba registrado
 export function agregarMovimiento({ usuario, tipo, monto, categoria, descripcion, fecha, mensajeId }) {
@@ -546,7 +549,17 @@ export function borrarDatos(usuario, alcance) {
   if (['todo', 'prestamos'].includes(alcance)) db.prepare('DELETE FROM prestamos WHERE usuario = ?').run(usuario);
   if (tocaMovimientos(alcance)) db.prepare(`DELETE FROM movimientos WHERE usuario = ? ${filtro}`).run(usuario);
   if (['todo', 'presupuestos'].includes(alcance)) db.prepare('DELETE FROM presupuestos WHERE usuario = ?').run(usuario);
+  if (alcance === 'todo') borrarDatosFase2(usuario);
   return cantidades;
+}
+
+// "Borrar todo" también limpia lo de la fase 2 (recordatorios, recurrentes, metas, alertas y contexto) de esa persona
+function borrarDatosFase2(usuario) {
+  db.prepare('DELETE FROM recurrentes_ejecuciones WHERE recurrente_id IN (SELECT id FROM recurrentes WHERE usuario = ?)').run(usuario);
+  db.prepare('DELETE FROM metas_aportes WHERE usuario = ?').run(usuario);
+  for (const tabla of ['recordatorios', 'recurrentes', 'metas', 'alertas_config', 'alertas_enviadas', 'contexto']) {
+    db.prepare(`DELETE FROM ${tabla} WHERE usuario = ?`).run(usuario);
+  }
 }
 
 // --- Preferencias por persona (por ejemplo, si quiere recibir consejos) ---

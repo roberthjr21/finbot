@@ -291,7 +291,7 @@ test('IA simulada: interpreta varias herramientas en un mensaje', async () => {
     assert.equal(r.acciones[1].datos.monto, 12000);
     assert.equal(r.texto, 'Listo, anoté los dos.');
     assert.equal(recibido.cabeceras['x-api-key'], 'clave-falsa');
-    assert.equal(recibido.cuerpo.tools.length, 16);
+    assert.equal(recibido.cuerpo.tools.length, 23);
     assert.match(recibido.cuerpo.system, /consultar_saldo/);
     assert.match(recibido.cuerpo.system, /Mascotas/);
     assert.match(recibido.cuerpo.system, /Hoy es 2026-10-17/);

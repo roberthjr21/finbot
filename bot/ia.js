@@ -158,6 +158,69 @@ const HERRAMIENTAS = [
     requeridas: ['alcance'],
   },
   {
+    nombre: 'crear_recordatorio',
+    descripcion:
+      'Crea un recordatorio de pago o tarea financiera para una fecha futura ("recuérdame pagar el arriendo el 5", "avísame mañana de la tarjeta"). ' +
+      'Calcula la fecha exacta a partir de hoy. Si no dice hora, no la envíes.',
+    propiedades: {
+      texto: { type: 'string', description: 'Qué recordar, corto.' },
+      fecha: { type: 'string', description: 'AAAA-MM-DD de cuando debe avisar (hoy o futura).' },
+      hora: { type: 'string', description: 'HH:MM en 24 h, solo si la dijo.' },
+      monto: { type: 'integer', minimum: 1, description: 'Monto en pesos, solo si lo dijo.' },
+    },
+    requeridas: ['texto', 'fecha'],
+  },
+  {
+    nombre: 'ver_recordatorios',
+    descripcion: 'Muestra los recordatorios pendientes ("qué recordatorios tengo", "qué pagos tengo pendientes").',
+  },
+  {
+    nombre: 'crear_recurrente',
+    descripcion:
+      'Programa un ingreso o gasto que se repite ("todos los meses pago 30 mil de Netflix", "mi salario llega cada quincena"). ' +
+      'NO registra nada hoy: se registrará solo en cada fecha. Para un gasto de una sola vez usa registrar_movimiento.',
+    propiedades: {
+      tipo: { type: 'string', enum: ['gasto', 'ingreso'] },
+      monto: { type: 'integer', minimum: 1, description: 'Monto en pesos colombianos, entero.' },
+      categoria: { type: 'string', enum: CATEGORIAS },
+      descripcion: { type: 'string', description: 'Descripción muy corta.' },
+      frecuencia: { type: 'string', enum: ['diaria', 'semanal', 'quincenal', 'mensual'] },
+      inicio: { type: 'string', description: 'AAAA-MM-DD de la primera vez. Si no la dijo, no la envíes (empieza hoy).' },
+    },
+    requeridas: ['tipo', 'monto', 'categoria', 'frecuencia'],
+  },
+  {
+    nombre: 'ver_recurrentes',
+    descripcion: 'Muestra los ingresos y gastos recurrentes programados.',
+  },
+  {
+    nombre: 'crear_meta',
+    descripcion:
+      'Crea una meta de ahorro ("quiero ahorrar 3 millones para un viaje", "meta de 500 mil para la moto, 50 mil cada mes"). ' +
+      'Si propone un aporte periódico, envía aporte y frecuencia juntos.',
+    propiedades: {
+      nombre: { type: 'string', description: 'Nombre corto de la meta.' },
+      objetivo: { type: 'integer', minimum: 1, description: 'Monto a ahorrar, en pesos.' },
+      aporte: { type: 'integer', minimum: 1, description: 'Aporte periódico planeado, en pesos.' },
+      frecuencia: { type: 'string', enum: ['semanal', 'quincenal', 'mensual'] },
+      fecha_limite: { type: 'string', description: 'AAAA-MM-DD, solo si la dijo y es futura.' },
+    },
+    requeridas: ['nombre', 'objetivo'],
+  },
+  {
+    nombre: 'aportar_meta',
+    descripcion: 'Anota un aporte a una meta de ahorro ("metí 50 mil a mi meta del viaje"). No cambia el saldo ni crea gastos.',
+    propiedades: {
+      meta: { type: 'string', description: 'Nombre (o parte del nombre) de la meta.' },
+      monto: { type: 'integer', minimum: 1, description: 'Monto aportado, en pesos.' },
+    },
+    requeridas: ['meta', 'monto'],
+  },
+  {
+    nombre: 'ver_metas',
+    descripcion: 'Muestra las metas de ahorro y su progreso ("cómo van mis metas").',
+  },
+  {
     nombre: 'analizar_gastos',
     descripcion:
       'Analiza cómo van los gastos de la persona este mes frente al mes pasado y en qué categorías se está pasando. ' +
@@ -169,7 +232,7 @@ const esquema = (h) => ({
   type: 'object',
   properties: h.propiedades && Object.fromEntries(Object.entries(h.propiedades).map(([nombre, propiedad]) => [
     nombre,
-    ['monto', 'limite_mensual'].includes(nombre)
+    ['monto', 'limite_mensual', 'objetivo', 'aporte'].includes(nombre)
       ? { ...propiedad, maximum: montoMaximo() }
       : propiedad,
   ])),
@@ -230,7 +293,7 @@ function modelosGemini() {
 // Prueba el modelo principal (2 intentos) y, si falla por saturación, tiempo o porque el
 // modelo ya no existe, prueba el de respaldo (1 intento). Los errores de clave o de
 // petición (400, 401, 403) se devuelven enseguida: otro modelo no los arregla.
-async function pedirAGemini(cuerpo) {
+export async function pedirAGemini(cuerpo) {
   const fija = process.env.GEMINI_URL; // una sola dirección fija (pruebas o proxy): sin modelo de respaldo
   const modelos = fija ? [null] : modelosGemini();
   let ultimoError;
@@ -302,6 +365,7 @@ Reglas:
 - Si habla en futuro ("voy a gastar 3700 en pasaje"), regístralo igual como gasto de hoy y agrega una frase corta diciendo que lo anotaste como gasto de hoy y que, si todavía no lo paga, puede borrar el último con /deshacer.
 - Usa la categoría Mascotas para gastos de gatos, perros u otras mascotas (comida, veterinario). Usa Otros solo si ninguna categoría encaja.
 - Para saber cuánto gastó o ganó en un periodo usa consultar_resumen. Para saber cuánta plata tiene, cuánto le queda o cuál es su saldo, usa consultar_saldo. Para borrar datos en bloque usa borrar_datos (solo pide confirmación; la persona confirma con /borrar confirmar). Para ver lo último, ultimos_movimientos; para iniciar un borrado pide confirmación con deshacer_ultimo; para límites mensuales, fijar_presupuesto o ver_presupuestos.
+- Recordatorios ("recuérdame pagar..."): crear_recordatorio con la fecha exacta; ver_recordatorios para listarlos. Movimientos que se repiten ("todos los meses...", "cada quincena"): crear_recurrente, que NO registra nada hoy. Metas de ahorro: crear_meta, aportar_meta, ver_metas; un aporte a una meta NO es un gasto.
 - Si pregunta cómo van sus gastos, en qué está fallando, si gasta mucho o quiere consejos sobre sus propios gastos, usa analizar_gastos: no respondas con consejos genéricos sin mirar sus datos.
 - Si quiere ahorrar, aprender a invertir o salir de deudas, usa mostrar_guia_financiera. Para otras preguntas de dinero (cómo organizarse), responde en texto, breve y práctico. Das información general, no eres asesor financiero: no recomiendes inversiones ni productos concretos ni prometas resultados.
 - Si la persona pregunta algo que no tiene que ver con sus finanzas personales (programación, tareas, cultura general, etc.), no lo respondas: di en una frase corta y amable que solo puedes ayudar con sus gastos, ingresos, presupuestos y finanzas, y da un ejemplo de lo que sí puedes hacer.

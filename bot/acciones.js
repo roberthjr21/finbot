@@ -3,6 +3,8 @@ import * as finanzas from './finanzas.js';
 import { CATEGORIAS } from './categorias.js';
 import { pesos, rangoMes, rangoPeriodo, valida } from './fechas.js';
 import { montoValido } from './montos.js';
+import { ejecutarFase2 } from './acciones2.js';
+import * as contexto from './contexto.js';
 import { TEMAS_GUIA, configurarConsejos, consejoProactivo, guiaFinanciera } from './consejos.js';
 
 const confirmacionesBorrado = new Map();
@@ -11,7 +13,7 @@ const CONFIRMACION_MS = 2 * 60 * 1000;
 const borradosPendientes = new Map();
 
 const NOMBRE_ALCANCE = {
-  todo: 'TODOS tus datos (movimientos, deudas, préstamos y presupuestos)',
+  todo: 'TODOS tus datos (movimientos, deudas, préstamos, presupuestos, recordatorios, recurrentes y metas)',
   movimientos: 'todos tus movimientos (ingresos y gastos)',
   ingresos: 'todos tus ingresos',
   gastos: 'todos tus gastos',
@@ -118,6 +120,7 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
         mensajeId: `${mensajeId}:${indice}`,
       });
       if (id === null) return null; // ya estaba registrado
+      contexto.guardar(usuario, { ultimo: { id } }); // para correcciones como "mejor ponlo en transporte"
 
       const etiqueta = datos.tipo === 'gasto' ? '💸 Gasto' : '💰 Ingreso';
       let texto = `${etiqueta} registrado: ${pesos(monto)} en ${categoria}`;
@@ -435,7 +438,9 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
     case 'analizar_gastos':
       return null;
 
-    default:
-      return '⚠️ No supe qué hacer con eso.';
+    default: {
+      const r = ejecutarFase2(accion, { usuario, hoy, mensajeId, indice, efectos }, ejecutar);
+      return r === undefined ? '⚠️ No supe qué hacer con eso.' : r;
+    }
   }
 }

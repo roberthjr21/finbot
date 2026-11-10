@@ -1,5 +1,6 @@
 import { buscarCategoria, normalizar, CATEGORIAS } from './categorias.js';
 import { parseMonto } from './montos.js';
+import { interpretarComandoFase2 } from './comandos2.js';
 
 export const GUIA = [
   '📖 *Guía rápida de FinBot*',
@@ -238,7 +239,7 @@ export function interpretarComando(texto) {
       return { acciones: [{ nombre: 'consultar_deudas', datos: resto.length ? { persona: resto.join(' ') } : {} }] };
 
     default:
-      return null;
+      return interpretarComandoFase2(comando, resto);
   }
 }
 
