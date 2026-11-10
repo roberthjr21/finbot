@@ -1,10 +1,53 @@
 import { DatabaseSync } from 'node:sqlite';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizar } from './categorias.js';
 import { migrar } from './migraciones.js';
 
 // Un solo archivo (finanzas.db). Los montos se guardan como pesos enteros.
 const archivoDB = process.env.DB_ARCHIVO ?? 'finanzas.db';
-const db = new DatabaseSync(archivoDB);
+const dbReal = new DatabaseSync(archivoDB);
+const baseTemporal = new AsyncLocalStorage();
+// Las consultas de un mensaje de prueba van a su propia base SQLite en memoria.
+// La web, el programador y los demás usuarios siempre ven la base real.
+const db = new Proxy(dbReal, {
+  get(target, propiedad) {
+    const destino = baseTemporal.getStore() ?? target;
+    const valor = Reflect.get(destino, propiedad, destino);
+    return typeof valor === 'function' ? valor.bind(destino) : valor;
+  },
+});
+const pruebas = new Map();
+
+function crearBasePrueba() {
+  const temporal = new DatabaseSync(':memory:');
+  try {
+    const objetos = dbReal.prepare(
+      "SELECT type, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'view' THEN 1 WHEN 'index' THEN 2 WHEN 'trigger' THEN 3 ELSE 4 END, rowid"
+    ).all();
+    for (const objeto of objetos) temporal.exec(objeto.sql);
+    return temporal;
+  } catch (error) {
+    temporal.close();
+    throw error;
+  }
+}
+
+export function activarPrueba(usuario) {
+  if (!pruebas.has(usuario)) pruebas.set(usuario, crearBasePrueba());
+  return true;
+}
+export function pruebaActiva(usuario) { return pruebas.has(usuario); }
+export function desactivarPrueba(usuario) {
+  const temporal = pruebas.get(usuario);
+  if (!temporal) return false;
+  pruebas.delete(usuario);
+  temporal.close();
+  return true;
+}
+export function conBasePrueba(usuario, tarea) {
+  const temporal = pruebas.get(usuario);
+  return temporal ? baseTemporal.run(temporal, tarea) : tarea();
+}
 
 const existeTabla = (nombre) =>
   Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(nombre));
@@ -168,7 +211,10 @@ export function enTransaccion(tarea) {
     throw error;
   }
 }
-export function cerrarBase() { db.close(); }
+export function cerrarBase() {
+  for (const usuario of [...pruebas.keys()]) desactivarPrueba(usuario);
+  dbReal.close();
+}
 
 // Conexión compartida para los módulos de la fase 2 (recordatorios, metas, etc.)
 export const base = () => db;
