@@ -26,6 +26,7 @@ import { programarRespaldos } from './respaldos.js';
 import * as contexto from './contexto.js';
 import { iniciarProgramador } from './programador.js';
 import * as media from './media.js';
+import { TIPOS_MEDIA, tipoDeContenido, rutaMultimedia } from './ruta-media.js';
 import { soloNumero, numeroValido, esChatIndividual, identificarRemitente } from './identidad.js';
 
 // ==========================================
@@ -65,14 +66,6 @@ const MAX_ANTIGUEDAD_S = 3 * 24 * 60 * 60;
 
 const MARCA = '\u200B';
 
-const TIPOS_MEDIA = new Set([
-  'audioMessage',
-  'imageMessage',
-  'videoMessage',
-  'documentMessage',
-  'stickerMessage',
-]);
-
 const enviadosPorBot = new Set();
 let remitentesNoAutorizados = 0;
 
@@ -107,9 +100,7 @@ function textoDe(msg) {
 }
 
 function tipoDe(msg) {
-  const m = contenidoDe(msg);
-
-  return m ? Object.keys(m)[0] : 'vacío';
+  return tipoDeContenido(contenidoDe(msg));
 }
 
 function segundos(t) {
@@ -416,7 +407,7 @@ async function atenderImagen(sock, jid, msg, usuario) {
     db.marcarProcesado(`${usuario}:${msg.key.id}`);
     await enviarTexto(sock, jid, texto, msg);
   };
-  if (!media.hayMedia()) return cerrar('Por ahora solo entiendo mensajes de texto. Escríbeme el gasto, por ejemplo: "compré aceite por 20 mil".');
+  if (!media.hayMedia()) return cerrar('🧾 Para leer recibos necesito GEMINI_API_KEY configurada y MEDIA_ACTIVA distinta de 0. También puedes escribirme el gasto.');
   if (Number(foto.fileLength ?? 0) > media.maxBytes()) return cerrar('🧾 Esa imagen pesa demasiado. Mándala con menos calidad.');
   if (db.usoDelDia(usuario, fechaBogota()).ia >= MAX_IA_DIA) return cerrar('⏳ Llegaste al límite diario de mensajes con IA. Mañana puedes seguir.');
   try {
@@ -437,9 +428,15 @@ async function atenderImagen(sock, jid, msg, usuario) {
 }
 
 async function responderSinTexto(sock, jid, msg, usuario) {
-  const tipo = tipoDe(msg);
-  if (tipo === 'audioMessage' && contenidoDe(msg)?.audioMessage?.ptt !== false && media.hayMedia()) return atenderAudio(sock, jid, msg, usuario);
-  if (tipo === 'imageMessage' && media.hayMedia()) return atenderImagen(sock, jid, msg, usuario);
+  // ptt=false no significa que sea un archivo no compatible: WhatsApp también
+  // puede entregar audios normales (y algunas notas de voz) con esa marca.
+  // Determinar por la presencia de audioMessage, no por ptt ni por el orden de claves.
+  const contenido = contenidoDe(msg);
+  const ruta = rutaMultimedia(contenido);
+  if (ruta === 'audio') return atenderAudio(sock, jid, msg, usuario);
+  if (ruta === 'imagen') return atenderImagen(sock, jid, msg, usuario);
+  const tipo = tipoDeContenido(contenido);
+  if (DEBUG) console.log(`[debug] Multimedia no procesada: tipo=${tipo}, ruta=${ruta ?? 'ninguna'}, habilitada=${media.hayMedia()}`);
 
   const procesado = db.enTransaccion(() => {
     if (db.yaProcesadoDe(usuario, msg.key.id)) return false;
@@ -451,9 +448,9 @@ async function responderSinTexto(sock, jid, msg, usuario) {
   await enviarTexto(
     sock,
     jid,
-    'Por ahora solo entiendo mensajes de texto. ' +
-    'Escríbeme el gasto o ingreso, por ejemplo: ' +
-    '"compré aceite por 20 mil".',
+    'Todavía no puedo procesar ese formato de archivo. ' +
+    'Envía una nota de voz de WhatsApp o una foto del recibo. ' +
+    'También puedes escribir el gasto, por ejemplo: "compré aceite por 20 mil".',
     msg
   );
 }
@@ -663,8 +660,7 @@ async function iniciar() {
 
         if (!texto) {
           const tipo = tipoDe(msg);
-
-            console.log(`Mensaje sin texto (${tipo}) ignorado.`);
+          if (DEBUG) console.log(`[debug] Mensaje sin texto recibido: ${tipo}`);
 
           if (TIPOS_MEDIA.has(tipo)) {
             encolar(() =>
