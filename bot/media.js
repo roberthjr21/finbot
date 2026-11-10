@@ -1,9 +1,10 @@
 import crypto from 'node:crypto';
 import * as db from './db.js';
-import { CATEGORIAS } from './categorias.js';
+import { CATEGORIAS, normalizar } from './categorias.js';
 import { fechaBogota, pesos, valida } from './fechas.js';
 import { montoValido } from './montos.js';
 import { entero } from './limites.js';
+import { pareceOtroTema } from './contexto.js';
 import { validarMovimiento, CATEGORIAS_RESERVADAS } from './movimientos.js';
 import { pedirAGemini } from './ia.js';
 
@@ -55,6 +56,10 @@ const ESQUEMA_RECIBO = {
     fecha: { type: 'string', description: 'Fecha del recibo AAAA-MM-DD, si se ve. Si no, vacío.' },
     total: { type: 'integer', description: 'Total pagado en pesos colombianos, entero (sin puntos ni decimales).' },
     categoria: { type: 'string', enum: CATEGORIAS.filter((c) => !CATEGORIAS_RESERVADAS.includes(c)) },
+    hora: { type: 'string', description: 'Hora del comprobante HH:MM (24 h), si se ve. Si no, vacío.' },
+    referencia: { type: 'string', description: 'Número de referencia, comprobante o aprobación que aparece en la captura. Si no se ve, vacío.' },
+    cuenta_origen: { type: 'string', description: 'De dónde salió el dinero (por ejemplo Bancolombia, Nequi, Daviplata, o el nombre de quien envía). Vacío si no aparece.' },
+    cuenta_destino: { type: 'string', description: 'A dónde llegó el dinero (por ejemplo Nequi, Bancolombia, o el nombre de quien recibe). Vacío si no aparece.' },
     tipo_operacion: { type: 'string', enum: ['compra', 'envio', 'recarga', 'transferencia_propia', 'ingreso', 'desconocida'], description: 'Clasifica según el comprobante. "Recarga realizada" desde Bancolombia u otra cuenta es recarga, NO compra ni gasto. "Envío realizado" es envio. Nunca infieras que recarga es un gasto.' },
   },
   required: ['es_recibo'],
@@ -102,32 +107,62 @@ export function validarRecibo(lectura, hoy = fechaBogota()) {
   return { ok: true, item: v.valor, comercio, fechaLeida: fecha === lectura.fecha };
 }
 
+const limpio = (v, max = 60) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+const HORA_VALIDA = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+// "Huella" de un comprobante: sirve para reconocer que dos capturas distintas (otra hora de pantalla,
+// otro recorte) son el MISMO pago. Solo existe si hay una referencia o, al menos, fecha + hora + monto.
+// Sin esos datos devuelve null (no se arriesga a confundir dos pagos distintos del mismo monto).
+export function huellaComprobante(lectura) {
+  const total = Number(lectura?.total);
+  if (!Number.isInteger(total) || total <= 0) return null;
+  const referencia = normalizar(lectura.referencia ?? '').replace(/[^a-z0-9]/g, '');
+  let base = null;
+  if (referencia.length >= 4) base = `ref:${referencia}:${total}`;
+  else if (valida(lectura.fecha) && HORA_VALIDA.test(String(lectura.hora ?? ''))) base = `fh:${lectura.fecha}:${lectura.hora}:${total}:${normalizar(lectura.tipo_operacion ?? '')}`;
+  return base ? crypto.createHash('sha256').update(base).digest('hex').slice(0, 32) : null;
+}
+
+// Lo que se recuerda de una recarga/transferencia/ingreso mientras la persona aclara de dónde vino:
+// monto, fecha, hora, origen, destino, referencia y huella (más el concepto cuando lo dice).
 export function contextoRecarga(lectura, hoy = fechaBogota()) {
   if (!lectura?.es_recibo || !['recarga','transferencia_propia','ingreso'].includes(lectura.tipo_operacion)) return null;
   const monto=Number(lectura.total);
   if (!Number.isInteger(monto) || !montoValido(monto)) return null;
   const fecha=valida(lectura.fecha) && lectura.fecha<=hoy ? lectura.fecha : hoy;
-  return {monto,fecha,origen:String(lectura.comercio??'').slice(0,60),etapa:'origen'};
+  return {
+    monto, fecha, etapa: 'origen',
+    origen: limpio(lectura.cuenta_origen || lectura.comercio),
+    destino: limpio(lectura.cuenta_destino),
+    hora: HORA_VALIDA.test(String(lectura.hora ?? '')) ? lectura.hora : undefined,
+    referencia: limpio(lectura.referencia, 40) || undefined,
+    huella: huellaComprobante(lectura) ?? undefined,
+  };
 }
 export function textoInicioRecarga(recarga) {
   return '🧾 Detecté una recarga de ' + pesos(recarga.monto) +
-    (recarga.origen ? ' desde ' + recarga.origen : '') +
+    (recarga.origen ? ' desde ' + recarga.origen : '') + (recarga.destino ? ' hacia ' + recarga.destino : '') +
+    (recarga.referencia ? ' (ref. ' + recarga.referencia + ')' : '') +
     '. No registré ningún gasto. ¿El dinero vino de otra cuenta tuya o te lo envió otra persona?';
 }
 export function continuarRecarga(p,texto) {
   if (!p || !Number.isInteger(p.monto)) return null;
   const t=String(texto??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
   if (t.startsWith('/')) return null;
+  // Una pregunta o un gasto nuevo no se "come": se atiende normal y la recarga sigue pendiente (vence sola).
+  if (pareceOtroTema(texto)) return null;
   if (/\b(mi otra cuenta|otra cuenta mia|cuenta propia|de mi cuenta)\b/.test(t))
-    return {fin:true,texto:'🔁 Transferencia propia de '+pesos(p.monto)+'. No registré un gasto ni un ingreso.'};
+    return {fin:true,huella:p.huella,texto:'🔁 Transferencia propia de '+pesos(p.monto)+'. No registré un gasto ni un ingreso (mover dinero entre tus cuentas no cambia cuánto tienes).'};
   if (p.etapa==='confirmar') {
-    if (/^(si|confirmo|dale|ok|listo)$/.test(t)) return {fin:true,accion:{nombre:'registrar_movimiento',datos:{tipo:'ingreso',monto:p.monto,fecha:p.fecha,categoria:p.categoria,descripcion:p.descripcion??'Transferencia recibida'}}};
+    if (/^(si|confirmo|dale|ok|listo)$/.test(t)) return {fin:true,huella:p.huella,accion:{nombre:'registrar_movimiento',datos:{tipo:'ingreso',monto:p.monto,fecha:p.fecha,categoria:p.categoria,descripcion:p.descripcion??'Transferencia recibida'}}};
     if (/^(no|cancelar|cancela)$/.test(t)) return {fin:true,texto:'✅ Cancelado. No registré el ingreso.'};
+    if (t.split(/\s+/).length > 3) return null; // otra conversación: no se interrumpe
     return {texto:'¿Confirmas registrar '+pesos(p.monto)+' como ingreso? Responde sí o no.'};
   }
-  if (/\bprestamo\b/.test(t)) return {fin:true,texto:'🤝 '+pesos(p.monto)+' recibidos como préstamo. No lo registré como ingreso; debe tratarse como deuda.'};
+  if (/\bprestamo\b/.test(t)) return {fin:true,huella:p.huella,texto:'🤝 '+pesos(p.monto)+' recibidos como préstamo. No lo registré como ingreso porque es plata que debes devolver. Anótalo como deuda con: /debo '+p.monto+' NombreDeQuienTePrestó'};
   if (p.etapa==='concepto') {
     if (!/\b(universidad|estudio|estudios|matricula|semestre|beca|colegio|educacion|venta|vendi|producto|salario|nomina|sueldo|trabajo|pago|regalo|ayuda|apoyo|ingreso)\b/.test(t)) {
+      if (t.split(/\s+/).length > 6) return null; // otra conversación: no se interrumpe
       return {texto:'¿Para qué recibiste los '+pesos(p.monto)+'? Por ejemplo: ayuda para la universidad, pago por trabajo, venta o regalo.'};
     }
     const categoria=/\b(universidad|estudio|estudios|matricula|semestre|beca|colegio|educacion)\b/.test(t)?'Estudio'

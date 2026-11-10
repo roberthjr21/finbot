@@ -175,7 +175,10 @@ test('contexto: guarda por usuario, vence y se puede borrar', () => {
   const t0 = 1_000_000_000_000;
   ctx.guardar(A, { ultimo: { id: 7 } }, t0);
   ctx.guardar(A, { pendiente: { tipo: 'x' } }, t0 + 1000);
-  assert.deepEqual(ctx.obtener(A, t0 + 2000), { ultimo: { id: 7 }, pendiente: { tipo: 'x' } });
+  const c = ctx.obtener(A, t0 + 2000);
+  assert.deepEqual(c.ultimo, { id: 7 });
+  assert.equal(c.pendiente.tipo, 'x');
+  assert.equal(c.pendiente.creado, t0 + 1000, 'la confirmación pendiente lleva su propia hora de creación');
   assert.deepEqual(ctx.obtener(B, t0 + 2000), {}, 'otra persona no ve nada');
   ctx.guardar(A, { pendiente: null }, t0 + 3000);
   assert.equal(ctx.obtener(A, t0 + 4000).pendiente, undefined);

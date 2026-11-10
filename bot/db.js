@@ -44,6 +44,8 @@ export function desactivarPrueba(usuario) {
   temporal.close();
   return true;
 }
+// Ejecuta algo contra la base REAL aunque estemos dentro de una prueba (solo lectura de metadatos)
+export const enBaseReal = (tarea) => baseTemporal.exit(tarea);
 export function conBasePrueba(usuario, tarea) {
   const temporal = pruebas.get(usuario);
   return temporal ? baseTemporal.run(temporal, tarea) : tarea();
@@ -502,8 +504,10 @@ export function yaProcesadoDe(usuario, id) {
 }
 
 // --- Uso diario (límites) ---
+// El uso diario SIEMPRE se cuenta en la base real, también en modo de prueba (si no, bastaría
+// activar y desactivar /prueba para saltarse los límites de mensajes e IA).
 export function sumarUso(usuario, dia, { mensajes = 0, ia = 0 } = {}) {
-  db.prepare(
+  dbReal.prepare(
     `INSERT INTO uso_diario (usuario, dia, mensajes, ia) VALUES (?, ?, ?, ?)
      ON CONFLICT (usuario, dia) DO UPDATE SET mensajes = mensajes + excluded.mensajes, ia = ia + excluded.ia`
   ).run(usuario, dia, mensajes, ia);
@@ -511,7 +515,7 @@ export function sumarUso(usuario, dia, { mensajes = 0, ia = 0 } = {}) {
 }
 
 export function usoDelDia(usuario, dia) {
-  const fila = db.prepare('SELECT mensajes, ia FROM uso_diario WHERE usuario = ? AND dia = ?').get(usuario, dia);
+  const fila = dbReal.prepare('SELECT mensajes, ia FROM uso_diario WHERE usuario = ? AND dia = ?').get(usuario, dia);
   return { mensajes: fila?.mensajes ?? 0, ia: fila?.ia ?? 0 };
 }
 

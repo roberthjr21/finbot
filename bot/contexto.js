@@ -11,6 +11,11 @@ import { entero } from './limites.js';
 
 const ttlMs = () => entero('CONTEXTO_MINUTOS', 30) * 60_000;
 
+// Una confirmación pendiente (voz, recibo, recarga) vence antes que el resto del contexto:
+// CONFIRMACION_MINUTOS (10 por defecto). Así un "sí" suelto de mucho después no registra nada viejo.
+const ttlConfirmacionMs = () => entero('CONFIRMACION_MINUTOS', 10) * 60_000;
+const CON_VENCIMIENTO = ['pendiente', 'recarga'];
+
 export function obtener(usuario, ahora = Date.now()) {
   const fila = db.base().prepare('SELECT datos, actualizado FROM contexto WHERE usuario = ?').get(usuario);
   if (!fila) return {};
@@ -18,13 +23,19 @@ export function obtener(usuario, ahora = Date.now()) {
     borrar(usuario);
     return {};
   }
-  try { return JSON.parse(fila.datos); } catch { return {}; }
+  let datos;
+  try { datos = JSON.parse(fila.datos); } catch { return {}; }
+  for (const k of CON_VENCIMIENTO) {
+    if (datos[k] && ahora - (datos[k].creado ?? 0) > ttlConfirmacionMs()) delete datos[k];
+  }
+  return datos;
 }
 
 // Mezcla los campos nuevos con lo vigente; un campo en null se elimina
 export function guardar(usuario, parcial, ahora = Date.now()) {
   const actual = obtener(usuario, ahora);
   const nuevo = { ...actual, ...parcial };
+  for (const k of CON_VENCIMIENTO) if (nuevo[k] && typeof nuevo[k] === 'object' && !nuevo[k].creado) nuevo[k] = { ...nuevo[k], creado: ahora };
   for (const k of Object.keys(nuevo)) if (nuevo[k] === null) delete nuevo[k];
   db.base()
     .prepare('INSERT INTO contexto (usuario, datos, actualizado) VALUES (?, ?, ?) ON CONFLICT (usuario) DO UPDATE SET datos = excluded.datos, actualizado = excluded.actualizado')
@@ -36,6 +47,16 @@ export const borrar = (usuario) => db.base().prepare('DELETE FROM contexto WHERE
 // Limpieza general de contextos vencidos (la llama el programador)
 export const purgar = (ahora = Date.now()) =>
   db.base().prepare('DELETE FROM contexto WHERE actualizado < ?').run(ahora - ttlMs()).changes;
+
+// ¿El mensaje parece una pregunta o una orden NUEVA (y no la respuesta a lo que está pendiente)?
+// Sirve para que una confirmación o una recarga a medias no se "coman" consultas o gastos nuevos.
+const INTERROGATIVA = /^(cuanto|cuanta|cuantos|cuantas|que|quien|quienes|como|cual|cuales|donde|cuando|por que|para que|en que|a quien|de quien|hay|tengo|puedes|podrias|me puedes|dime|muestrame|dame|ver|mi saldo|saldo)\b/;
+const ORDEN = /\b(gaste|gastaste|compre|pague|abone|preste|debo|recargue|borra|borrar|elimina|eliminar|cambia|ponme|fijar|fija|recuerdame|recordatorio|resumen|ultimos|presupuesto|meta|aportar|analiza)\b/;
+export function pareceOtroTema(texto) {
+  const t = normalizar(texto).replace(/[¡!]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t) return false;
+  return String(texto).includes('?') || INTERROGATIVA.test(t) || ORDEN.test(t);
+}
 
 // ---- Confirmaciones ("sí" / "no") ----
 const SI = new Set(['si', 'sii', 'dale', 'ok', 'okay', 'listo', 'confirmo', 'confirmar', 'correcto', 'claro', 'yes', 'registralo', 'registrala', 'guardalo']);
