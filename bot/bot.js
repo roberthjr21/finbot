@@ -431,7 +431,7 @@ async function atenderImagenEnBase(sock, jid, msg, usuario) {
     if (db.yaProcesado(`media:${usuario}:${hash}`)) return cerrar('🧾 Esa imagen ya la registraste antes; no la dupliqué.');
     const hoy = fechaBogota();
     const lectura = media.validarRecibo(await media.leerRecibo({ buffer, mimetype: foto.mimetype }), hoy);
-    if (!lectura.ok) return cerrar(`🧾 ${lectura.error} Escríbeme el gasto, por ejemplo: "gasté 45 mil en el mercado".`);
+    if (!lectura.ok) return cerrar(`🧾 ${lectura.error}`);
     db.marcarProcesado(`${usuario}:${msg.key.id}`);
     contexto.guardar(usuario, { pendiente: { origen: 'imagen', items: [{ ...lectura.item, tipo: 'gasto' }], hash } });
     await enviarTexto(sock, jid, media.textoConfirmacionRecibo(lectura, media.posibleDuplicado(usuario, lectura.item)), msg);
