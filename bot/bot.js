@@ -26,6 +26,7 @@ import { programarRespaldos } from './respaldos.js';
 import * as contexto from './contexto.js';
 import { iniciarProgramador } from './programador.js';
 import * as media from './media.js';
+import { interpretarPrueba, responderPrueba } from './modo-prueba.js';
 import { TIPOS_MEDIA, tipoDeContenido, rutaMultimedia } from './ruta-media.js';
 import { soloNumero, numeroValido, esChatIndividual, identificarRemitente } from './identidad.js';
 
@@ -182,6 +183,15 @@ async function enviarTexto(sock, jid, texto, citado) {
 // opciones.origen = 'voz' cuando el texto viene de una nota de voz transcrita: los movimientos
 // que se entiendan se confirman con la persona antes de guardarse.
 async function atender(sock, jid, msg, usuario, texto, opciones = {}) {
+  const comandoPrueba = interpretarPrueba(texto);
+  if (comandoPrueba) {
+    await enviarTexto(sock, jid, responderPrueba(usuario, comandoPrueba), msg);
+    return;
+  }
+  return db.conBasePrueba(usuario, () => atenderEnBase(sock, jid, msg, usuario, texto, opciones));
+}
+
+async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
   // La clave incluye al usuario: dos personas nunca comparten marca de "ya procesado"
   const id = `${usuario}:${msg.key.id}`;
 
@@ -354,7 +364,7 @@ async function atender(sock, jid, msg, usuario, texto, opciones = {}) {
   await enviarTexto(
     sock,
     jid,
-    respuestas.join('\n\n'),
+    (db.pruebaActiva(usuario) ? '🧪 MODO PRUEBA · Datos temporales, no aparecen en la web.\n\n' : '') + respuestas.join('\n\n'),
     msg
   );
 }
@@ -401,6 +411,10 @@ async function atenderAudio(sock, jid, msg, usuario) {
 
 // Foto de recibo: se lee, se valida con código y se pide confirmación (con aviso de posible duplicado).
 async function atenderImagen(sock, jid, msg, usuario) {
+  return db.conBasePrueba(usuario, () => atenderImagenEnBase(sock, jid, msg, usuario));
+}
+
+async function atenderImagenEnBase(sock, jid, msg, usuario) {
   if (db.yaProcesadoDe(usuario, msg.key.id)) return;
   const foto = contenidoDe(msg)?.imageMessage ?? {};
   const cerrar = async (texto) => {
