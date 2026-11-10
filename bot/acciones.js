@@ -28,6 +28,11 @@ function resumenBorrado(c) {
   if (c.deudas) partes.push(`${c.deudas} registro${c.deudas === 1 ? '' : 's'} de deudas`);
   if (c.prestamos) partes.push(`${c.prestamos} registro${c.prestamos === 1 ? '' : 's'} de préstamos`);
   if (c.presupuestos) partes.push(`${c.presupuestos} presupuesto${c.presupuestos === 1 ? '' : 's'}`);
+  if (c.recordatorios) partes.push(`${c.recordatorios} recordatorio${c.recordatorios === 1 ? '' : 's'}`);
+  if (c.recurrentes) partes.push(`${c.recurrentes} recurrente${c.recurrentes === 1 ? '' : 's'}`);
+  if (c.metas) partes.push(`${c.metas} meta${c.metas === 1 ? '' : 's'} de ahorro`);
+  if (c.alertas) partes.push(`${c.alertas} registro${c.alertas === 1 ? '' : 's'} de alertas`);
+  if (c.contexto) partes.push('contexto de conversación');
   return partes.join(', ');
 }
 

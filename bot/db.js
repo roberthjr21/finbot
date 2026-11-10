@@ -146,14 +146,25 @@ export function marcarProcesado(id) {
 }
 // Las acciones de un mensaje y su marca de idempotencia se confirman juntas.
 // Así, un fallo no deja un lote financiero aplicado a medias.
+// Los mensajes de WhatsApp ya corren dentro de una transacción. Una edición interna
+// requiere un SAVEPOINT, no un segundo BEGIN IMMEDIATE; el BEGIN externo se conserva
+// para reservar el escritor con anticipación y mantener la seguridad de concurrencia.
+let siguienteSavepoint = 0;
 export function enTransaccion(tarea) {
-  db.exec('BEGIN IMMEDIATE');
+  const anidada = db.isTransaction;
+  const nombre = anidada ? `finbot_anidada_${++siguienteSavepoint}` : null;
+  db.exec(anidada ? `SAVEPOINT ${nombre}` : 'BEGIN IMMEDIATE');
   try {
     const resultado = tarea();
-    db.exec('COMMIT');
+    db.exec(anidada ? `RELEASE SAVEPOINT ${nombre}` : 'COMMIT');
     return resultado;
   } catch (error) {
-    try { db.exec('ROLLBACK'); } catch {}
+    if (anidada) {
+      try { db.exec(`ROLLBACK TO SAVEPOINT ${nombre}`); } catch {}
+      try { db.exec(`RELEASE SAVEPOINT ${nombre}`); } catch {}
+    } else {
+      try { db.exec('ROLLBACK'); } catch {}
+    }
     throw error;
   }
 }
@@ -532,6 +543,16 @@ export function contarBorrado(usuario, alcance) {
     presupuestos: ['todo', 'presupuestos'].includes(alcance)
       ? cuenta('SELECT COUNT(*) AS n FROM presupuestos WHERE usuario = ?', usuario)
       : 0,
+    // /borrar todo debe advertir también sobre los datos de fase 2
+    // incluso cuando el usuario aún no tiene movimientos financieros.
+    recordatorios: alcance === 'todo' ? cuenta('SELECT COUNT(*) AS n FROM recordatorios WHERE usuario = ?', usuario) : 0,
+    recurrentes: alcance === 'todo' ? cuenta('SELECT COUNT(*) AS n FROM recurrentes WHERE usuario = ?', usuario) : 0,
+    metas: alcance === 'todo' ? cuenta('SELECT COUNT(*) AS n FROM metas WHERE usuario = ?', usuario) : 0,
+    alertas: alcance === 'todo'
+      ? cuenta('SELECT COUNT(*) AS n FROM alertas_config WHERE usuario = ?', usuario)
+        + cuenta('SELECT COUNT(*) AS n FROM alertas_enviadas WHERE usuario = ?', usuario)
+      : 0,
+    contexto: alcance === 'todo' ? cuenta('SELECT COUNT(*) AS n FROM contexto WHERE usuario = ?', usuario) : 0,
   };
 }
 

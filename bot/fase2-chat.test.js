@@ -100,6 +100,42 @@ test('chat: otra persona no ve ni toca lo de U', () => {
   assert.match(run(V, 'pausar_recurrente', { id: 1 }), /No encontré/);
 });
 
+test('chat: corregir un gasto dentro de la transacción del mensaje funciona y revierte en bloque', () => {
+  const usuario = '573002220090';
+  run(usuario, 'registrar_movimiento', { tipo: 'gasto', monto: 20000, categoria: 'Comida', descripcion: 'taxi' });
+  const id = contexto.obtener(usuario).ultimo.id;
+  assert.doesNotThrow(() => db.enTransaccion(() => {
+    assert.match(run(usuario, 'corregir_ultimo', { categoria: 'Transporte' }), /Corregido/);
+  }));
+  assert.equal(db.obtenerMovimiento(usuario, id).categoria, 'Transporte');
+  const auditorias = db.listarAuditoria(usuario).length;
+  assert.throws(() => db.enTransaccion(() => {
+    run(usuario, 'corregir_ultimo', { monto: 35000 });
+    throw new Error('se revierte el mensaje completo');
+  }), /se revierte el mensaje completo/);
+  assert.equal(db.obtenerMovimiento(usuario, id).monto, 20000);
+  assert.equal(db.listarAuditoria(usuario).length, auditorias);
+});
+
+test('borrar todo: detecta los datos de fase 2 aunque no haya movimientos financieros', () => {
+  const usuario = '573002220091';
+  assert.match(run(usuario, 'crear_recordatorio', { texto: 'Pagar arriendo', fecha: '2026-11-15' }), /Listo/);
+  assert.match(run(usuario, 'crear_recurrente', { tipo: 'gasto', monto: 30000, categoria: 'Servicios', frecuencia: 'mensual', descripcion: 'Netflix', inicio: '2026-11-15' }), /Programado/);
+  assert.match(run(usuario, 'crear_meta', { nombre: 'Viaje', objetivo: 1000000 }), /Meta creada/);
+  assert.match(run(usuario, 'configurar_alertas', { max_diarias: 3 }), /Listo/);
+  const c = db.contarBorrado(usuario, 'todo');
+  assert.equal(c.movimientos, 0);
+  assert.deepEqual([c.recordatorios, c.recurrentes, c.metas, c.alertas], [1, 1, 1, 1]);
+  const advertencia = run(usuario, 'borrar_datos', { alcance: 'todo' });
+  for (const palabra of [/recordatorio/, /recurrente/, /meta/, /alertas/, /\/borrar confirmar/]) {
+    assert.match(advertencia, palabra);
+  }
+  assert.match(db.enTransaccion(() => run(usuario, 'confirmar_borrado')), /borré/);
+  for (const tabla of ['recordatorios', 'recurrentes', 'metas', 'alertas_config', 'contexto']) {
+    assert.equal(db.base().prepare(`SELECT COUNT(*) AS n FROM ${tabla} WHERE usuario = ?`).get(usuario).n, 0, tabla);
+  }
+});
+
 test('contexto: corregir el último movimiento por categoría o monto', () => {
   run(U, 'registrar_movimiento', { tipo: 'gasto', monto: 20000, categoria: 'Comida', descripcion: 'taxi' });
   assert.match(run(U, 'corregir_ultimo', { categoria: 'Transporte' }), /Corregido: 💸 \$20\.000 en Transporte/);
