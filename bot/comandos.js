@@ -32,7 +32,13 @@ export const GUIA = [
   '• "borra lo último" (antes te pido confirmación)',
   '• "/borrar todos mis ingresos" para empezar de cero esa parte',
   '',
-  '6️⃣ *Aprende*',
+  '6️⃣ *Organízate*',
+  '• "recuérdame pagar el arriendo el 5" · /recordatorios',
+  '• "todos los meses pago 30 mil de Netflix" (se registra solo) · /recurrentes',
+  '• "quiero ahorrar 3 millones para un viaje" · "metí 50 mil a la meta del viaje" · /metas',
+  '• Notas de voz y fotos de recibos: te muestro lo que entendí y tú confirmas con *sí* o *no*',
+  '',
+  '7️⃣ *Aprende*',
   '• /ahorro: cómo ahorrar (con tus números)',
   '• /invertir: lo básico antes de invertir',
   '• /guiadeudas: cómo salir de deudas',
@@ -69,6 +75,13 @@ export const AYUDA = [
   '/consejos si|no   (avisos para ahorrar o invertir)',
   '/debo 50000 Juan   /abono 20000 Juan   /deudas [persona]',
   '/borrar ingresos | gastos | deudas | presupuestos | todo   (pide confirmación)',
+  '',
+  '⏰ *Recordatorios*: /recordar mañana pagar arriendo 800000 · /recordatorios · /listo N',
+  '🔁 *Recurrentes*: /recurrente gasto 30000 servicios mensual Netflix · /recurrentes · /pausar N · /reactivar N',
+  '🎯 *Metas de ahorro*: /meta Viaje 3000000 · /metas · /aportar Viaje 50000',
+  '🔔 *Alertas*: /alertas (ver y configurar)',
+  '🎙️ Si te equivocas en lo último, dime: "mejor ponlo en transporte" o "era de 30 mil".',
+  '🎙️ También puedes mandarme una *nota de voz* o una *foto de un recibo* (te pido confirmar antes de guardar).',
 ].join('\n');
 
 const PERIODOS = {

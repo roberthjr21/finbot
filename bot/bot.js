@@ -4,6 +4,7 @@ import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
   normalizeMessageContent,
+  downloadMediaMessage,
 } from '@whiskeysockets/baileys';
 
 import qrcode from 'qrcode-terminal';
@@ -22,6 +23,9 @@ import { tieneDecimalConPunto } from './montos.js';
 import { crearLimitador, entero } from './limites.js';
 import * as acceso from './acceso.js';
 import { programarRespaldos } from './respaldos.js';
+import * as contexto from './contexto.js';
+import { iniciarProgramador } from './programador.js';
+import * as media from './media.js';
 import { soloNumero, numeroValido, esChatIndividual, identificarRemitente } from './identidad.js';
 
 // ==========================================
@@ -142,6 +146,7 @@ const BIENVENIDA =
   '• "gasté 15 mil en almuerzo"\n' +
   '• "me pagaron 1,5 millones"\n' +
   '• "cuánta plata tengo"\n\n' +
+  'También puedo recordarte pagos (/recordar), ayudarte con metas de ahorro (/meta) y leer notas de voz o fotos de recibos.\n\n' +
   'Escribe /guia para una guía paso a paso o /ayuda para ver los comandos.';
 
 // ==========================================
@@ -183,7 +188,9 @@ async function enviarTexto(sock, jid, texto, citado) {
 // PROCESAMIENTO FINANCIERO
 // ==========================================
 
-async function atender(sock, jid, msg, usuario, texto) {
+// opciones.origen = 'voz' cuando el texto viene de una nota de voz transcrita: los movimientos
+// que se entiendan se confirman con la persona antes de guardarse.
+async function atender(sock, jid, msg, usuario, texto, opciones = {}) {
   // La clave incluye al usuario: dos personas nunca comparten marca de "ya procesado"
   const id = `${usuario}:${msg.key.id}`;
 
@@ -233,6 +240,12 @@ async function atender(sock, jid, msg, usuario, texto) {
       respuestas.push(
         'No conozco ese comando. Escribe /ayuda para ver los disponibles.'
       );
+    } else if (!opciones.origen && contexto.obtener(usuario).pendiente && contexto.respuestaDeConfirmacion(texto)) {
+      // "sí" / "no" sobre lo que quedó pendiente (nota de voz o foto de recibo)
+      acciones = [{ nombre: contexto.respuestaDeConfirmacion(texto) === 'si' ? 'confirmar_pendiente' : 'cancelar_pendiente', datos: {} }];
+    } else if (!opciones.origen && contexto.obtener(usuario).ultimo && contexto.interpretarCorreccion(texto)) {
+      // "mejor ponlo en transporte": corrige el último movimiento sin gastar IA
+      acciones = [{ nombre: 'corregir_ultimo', datos: contexto.interpretarCorreccion(texto) }];
     } else if (pideGuia(texto)) {
       respuestas.push(GUIA);
     } else if (temaDeGuia(texto)) {
@@ -243,7 +256,18 @@ async function atender(sock, jid, msg, usuario, texto) {
 
       acciones = sinConfirmaciones(r.acciones);
 
-      if (r.texto) {
+      if (opciones.origen === 'voz') {
+        const { items, descartados, resto } = media.separarRegistros(acciones, hoy);
+        acciones = resto;
+        if (items.length > 0) {
+          contexto.guardar(usuario, { pendiente: { origen: 'voz', items } });
+          respuestas.push(media.textoConfirmacionVoz(opciones.transcripcion ?? texto, items, descartados));
+        } else if (descartados > 0) {
+          respuestas.push('🎙️ No pude entender bien el monto o la categoría. Intenta decirlo otra vez, o escríbemelo.');
+        }
+      }
+
+      if (r.texto && !(opciones.origen === 'voz' && respuestas.length > 0)) {
         respuestas.push(r.texto);
       }
     } else if (atajoSinIA(texto)) {
@@ -348,7 +372,75 @@ async function atender(sock, jid, msg, usuario, texto) {
 // MENSAJES SIN TEXTO
 // ==========================================
 
+async function descargar(sock, msg) {
+  return downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+}
+
+// Nota de voz: se transcribe y el texto sigue el mismo camino que un mensaje escrito (con confirmación).
+async function atenderAudio(sock, jid, msg, usuario) {
+  if (db.yaProcesadoDe(usuario, msg.key.id)) return;
+  const nota = contenidoDe(msg)?.audioMessage ?? {};
+  const motivo = !media.hayMedia() ? 'Las notas de voz no están activadas en este bot. Escríbeme el gasto, por ejemplo: "compré aceite por 20 mil".'
+    : (nota.seconds ?? 0) > media.maxSegundos() ? `🎙️ Ese audio es muy largo (máximo ${media.maxSegundos()} segundos). Mándalo en partes más cortas.`
+    : Number(nota.fileLength ?? 0) > media.maxBytes() ? '🎙️ Ese audio pesa demasiado. Mándalo más corto.'
+    : db.usoDelDia(usuario, fechaBogota()).ia >= MAX_IA_DIA ? '⏳ Llegaste al límite diario de mensajes con IA. Escríbeme con comandos, por ejemplo: /gasto 20000 comida almuerzo'
+    : null;
+  if (motivo) {
+    db.marcarProcesado(`${usuario}:${msg.key.id}`);
+    await enviarTexto(sock, jid, motivo, msg);
+    return;
+  }
+  let transcripcion = '';
+  try {
+    db.sumarUso(usuario, fechaBogota(), { ia: 1 });
+    transcripcion = await media.transcribirAudio({ buffer: await descargar(sock, msg), mimetype: nota.mimetype });
+  } catch (error) {
+    console.error('No se pudo transcribir la nota de voz:', error.message);
+    db.marcarProcesado(`${usuario}:${msg.key.id}`);
+    await enviarTexto(sock, jid, '🎙️ No pude procesar ese audio ahora mismo. Intenta de nuevo o escríbeme el gasto.', msg);
+    return;
+  }
+  if (!transcripcion) {
+    db.marcarProcesado(`${usuario}:${msg.key.id}`);
+    await enviarTexto(sock, jid, '🎙️ No logré entender el audio. Intenta de nuevo hablando más cerca, o escríbeme el gasto.', msg);
+    return;
+  }
+  await atender(sock, jid, msg, usuario, transcripcion, { origen: 'voz', transcripcion });
+}
+
+// Foto de recibo: se lee, se valida con código y se pide confirmación (con aviso de posible duplicado).
+async function atenderImagen(sock, jid, msg, usuario) {
+  if (db.yaProcesadoDe(usuario, msg.key.id)) return;
+  const foto = contenidoDe(msg)?.imageMessage ?? {};
+  const cerrar = async (texto) => {
+    db.marcarProcesado(`${usuario}:${msg.key.id}`);
+    await enviarTexto(sock, jid, texto, msg);
+  };
+  if (!media.hayMedia()) return cerrar('Por ahora solo entiendo mensajes de texto. Escríbeme el gasto, por ejemplo: "compré aceite por 20 mil".');
+  if (Number(foto.fileLength ?? 0) > media.maxBytes()) return cerrar('🧾 Esa imagen pesa demasiado. Mándala con menos calidad.');
+  if (db.usoDelDia(usuario, fechaBogota()).ia >= MAX_IA_DIA) return cerrar('⏳ Llegaste al límite diario de mensajes con IA. Mañana puedes seguir.');
+  try {
+    db.sumarUso(usuario, fechaBogota(), { ia: 1 });
+    const buffer = await descargar(sock, msg);
+    const hash = media.hashDe(buffer);
+    if (db.yaProcesado(`media:${usuario}:${hash}`)) return cerrar('🧾 Esa imagen ya la registraste antes; no la dupliqué.');
+    const hoy = fechaBogota();
+    const lectura = media.validarRecibo(await media.leerRecibo({ buffer, mimetype: foto.mimetype }), hoy);
+    if (!lectura.ok) return cerrar(`🧾 ${lectura.error} Escríbeme el gasto, por ejemplo: "gasté 45 mil en el mercado".`);
+    db.marcarProcesado(`${usuario}:${msg.key.id}`);
+    contexto.guardar(usuario, { pendiente: { origen: 'imagen', items: [{ ...lectura.item, tipo: 'gasto' }], hash } });
+    await enviarTexto(sock, jid, media.textoConfirmacionRecibo(lectura, media.posibleDuplicado(usuario, lectura.item)), msg);
+  } catch (error) {
+    console.error('No se pudo leer la imagen:', error.message);
+    await cerrar('🧾 No pude leer esa imagen ahora mismo. Intenta de nuevo o escríbeme el gasto.');
+  }
+}
+
 async function responderSinTexto(sock, jid, msg, usuario) {
+  const tipo = tipoDe(msg);
+  if (tipo === 'audioMessage' && contenidoDe(msg)?.audioMessage?.ptt !== false && media.hayMedia()) return atenderAudio(sock, jid, msg, usuario);
+  if (tipo === 'imageMessage' && media.hayMedia()) return atenderImagen(sock, jid, msg, usuario);
+
   const procesado = db.enTransaccion(() => {
     if (db.yaProcesadoDe(usuario, msg.key.id)) return false;
     db.marcarProcesado(`${usuario}:${msg.key.id}`);
@@ -651,11 +743,14 @@ async function enviarAUsuario(telefono, texto) {
 }
 
 const servidorApi = iniciarApi({ enviar: enviarAUsuario });
+// Recordatorios, recurrentes y alertas (ver programador.js)
+const detenerProgramador = iniciarProgramador({ enviar: enviarAUsuario });
 
 async function apagar(signal) {
   if (cerrando) return;
   cerrando = true;
   console.log(`Cierre solicitado (${signal}); guardando y cerrando SQLite.`);
+  detenerProgramador();
   try { socketActivo?.end(new Error('Cierre solicitado')); } catch {}
   // Eventos que ya estaban resolviendo la identidad pueden encolar trabajo
   // después de que el socket se cierre.
