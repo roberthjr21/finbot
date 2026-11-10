@@ -442,7 +442,7 @@ async function atenderImagenEnBase(sock, jid, msg, usuario) {
     const lectura=media.validarRecibo(datosLeidos,hoy);
     if (!lectura.ok) {
       if (recarga) contexto.guardar(usuario,{recarga,pendiente:null});
-      return cerrar(`🧾 ${lectura.error}`);
+      return cerrar(recarga ? media.textoInicioRecarga(recarga) : `🧾 ${lectura.error}`);
     }
     contexto.guardar(usuario,{recarga:null});
     db.marcarProcesado(`${usuario}:${msg.key.id}`);
