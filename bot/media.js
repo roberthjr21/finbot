@@ -102,6 +102,33 @@ export function validarRecibo(lectura, hoy = fechaBogota()) {
   return { ok: true, item: v.valor, comercio, fechaLeida: fecha === lectura.fecha };
 }
 
+export function contextoRecarga(lectura, hoy = fechaBogota()) {
+  if (!lectura?.es_recibo || !['recarga','transferencia_propia','ingreso'].includes(lectura.tipo_operacion)) return null;
+  const monto=Number(lectura.total);
+  if (!Number.isInteger(monto) || !montoValido(monto)) return null;
+  const fecha=valida(lectura.fecha) && lectura.fecha<=hoy ? lectura.fecha : hoy;
+  return {monto,fecha,origen:String(lectura.comercio??'').slice(0,60),etapa:'origen'};
+}
+export function continuarRecarga(p,texto) {
+  if (!p || !Number.isInteger(p.monto)) return null;
+  const t=String(texto??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+  if (t.startsWith('/')) return null;
+  if (/\b(mi otra cuenta|otra cuenta mia|cuenta propia|de mi cuenta)\b/.test(t))
+    return {fin:true,texto:'🔁 Transferencia propia de '+pesos(p.monto)+'. No registré un gasto ni un ingreso.'};
+  if (p.etapa==='confirmar') {
+    if (/^(si|confirmo|dale|ok|listo)$/.test(t)) return {fin:true,accion:{nombre:'registrar_movimiento',datos:{tipo:'ingreso',monto:p.monto,fecha:p.fecha,categoria:p.categoria,descripcion:'Transferencia recibida'}}};
+    if (/^(no|cancelar|cancela)$/.test(t)) return {fin:true,texto:'✅ Cancelado. No registré el ingreso.'};
+    return {texto:'¿Confirmas registrar '+pesos(p.monto)+' como ingreso? Responde sí o no.'};
+  }
+  if (/\bprestamo\b/.test(t)) return {fin:true,texto:'🤝 '+pesos(p.monto)+' recibidos como préstamo. No lo registré como ingreso; debe tratarse como deuda.'};
+  if (p.etapa==='concepto') {
+    const categoria=/\b(venta|vendi|producto)\b/.test(t)?'Ventas':/\b(salario|nomina|sueldo|trabajo|pago)\b/.test(t)?'Salario':'Otros';
+    return {pendiente:{...p,etapa:'confirmar',categoria},texto:'💰 '+pesos(p.monto)+' · '+categoria+'. ¿Confirmas registrar este ingreso? Responde sí o no.'};
+  }
+  if (/\b(me pasaron|me enviaron|me transfirieron|me consignaron|me dieron|otra persona|alguien me|me pagaron|me regalaron)\b/.test(t))
+    return {pendiente:{...p,etapa:'concepto'},texto:'💰 Entendido: recibiste '+pesos(p.monto)+' de otra persona. ¿Fue un regalo, un pago, una venta u otro concepto?'};
+  return null;
+}
 export const hashDe = (buffer) => crypto.createHash('sha256').update(buffer).digest('hex');
 
 // ¿Ya hay un gasto igual (mismo monto y fecha)? Solo advierte; decide la persona.
