@@ -233,7 +233,14 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
       ? interpretarComando(texto)
       : null;
 
-    if (comando?.respuesta) {
+    const seguimiento = !comando && !texto.startsWith('/') && !opciones.origen
+      ? media.continuarRecarga(contexto.obtener(usuario).recarga, texto) : null;
+    if (seguimiento) {
+      if (seguimiento.fin) contexto.guardar(usuario,{recarga:null});
+      else if (seguimiento.pendiente) contexto.guardar(usuario,{recarga:seguimiento.pendiente});
+      if (seguimiento.texto) respuestas.push(seguimiento.texto);
+      if (seguimiento.accion) acciones=[seguimiento.accion];
+    } else if (comando?.respuesta) {
       respuestas.push(comando.respuesta);
     } else if (comando) {
       acciones = comando.acciones;
@@ -430,8 +437,14 @@ async function atenderImagenEnBase(sock, jid, msg, usuario) {
     const hash = media.hashDe(buffer);
     if (db.yaProcesado(`media:${usuario}:${hash}`)) return cerrar('🧾 Esa imagen ya la registraste antes; no la dupliqué.');
     const hoy = fechaBogota();
-    const lectura = media.validarRecibo(await media.leerRecibo({ buffer, mimetype: foto.mimetype }), hoy);
-    if (!lectura.ok) return cerrar(`🧾 ${lectura.error}`);
+    const datosLeidos=await media.leerRecibo({buffer,mimetype:foto.mimetype});
+    const recarga=media.contextoRecarga(datosLeidos,hoy);
+    const lectura=media.validarRecibo(datosLeidos,hoy);
+    if (!lectura.ok) {
+      if (recarga) contexto.guardar(usuario,{recarga,pendiente:null});
+      return cerrar(`🧾 ${lectura.error}`);
+    }
+    contexto.guardar(usuario,{recarga:null});
     db.marcarProcesado(`${usuario}:${msg.key.id}`);
     contexto.guardar(usuario, { pendiente: { origen: 'imagen', items: [{ ...lectura.item, tipo: 'gasto' }], hash } });
     await enviarTexto(sock, jid, media.textoConfirmacionRecibo(lectura, media.posibleDuplicado(usuario, lectura.item)), msg);
