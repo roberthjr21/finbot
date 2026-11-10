@@ -12,7 +12,7 @@ import pino from 'pino';
 
 import * as db from './db.js';
 import { fechaBogota } from './fechas.js';
-import { hayIA, interpretar, nombreProveedor } from './ia.js';
+import { hayIA, interpretar, nombreProveedor, mensajeErrorIA } from './ia.js';
 import { interpretarComando, atajoSinIA, pideGuia, GUIA } from './comandos.js';
 import { ejecutar } from './acciones.js';
 import { responderAnalisis } from './analisis.js';
@@ -26,6 +26,8 @@ import { programarRespaldos } from './respaldos.js';
 import * as contexto from './contexto.js';
 import { iniciarProgramador } from './programador.js';
 import * as media from './media.js';
+import { crearColas } from './cola-usuarios.js';
+import { instalarRedaccion } from './registro.js';
 import { interpretarPrueba, responderPrueba } from './modo-prueba.js';
 import { TIPOS_MEDIA, tipoDeContenido, rutaMultimedia } from './ruta-media.js';
 import { soloNumero, numeroValido, esChatIndividual, identificarRemitente } from './identidad.js';
@@ -57,6 +59,7 @@ const limitadorMensajes = crearLimitador({ max: MAX_MENSAJES_MINUTO, ventanaMs: 
 const avisadosPorExceso = new Set();
 
 const DEBUG = process.env.DEBUG === '1';
+instalarRedaccion(); // ningún registro (log) debe contener claves, tokens ni números de cuenta
 const AUTOCHAT = process.env.MODO_AUTOCHAT === '1';
 
 const ESPERA_RECONEXION_MS = Number(
@@ -74,14 +77,18 @@ let remitentesNoAutorizados = 0;
 // COLA DE MENSAJES
 // ==========================================
 
-let cola = Promise.resolve();
+// Una cola por persona (ver cola-usuarios.js): en orden dentro de cada chat, en paralelo entre personas.
+const colas = crearColas();
+const avisadosPorCola = new Set();
 
-function encolar(tarea) {
-  cola = cola
-    .then(tarea)
-    .catch((e) => console.error('Error en la cola:', e));
-
-  return cola;
+function encolar(usuario, tarea) {
+  const promesa = colas.encolar(usuario, tarea);
+  if (promesa === null && !avisadosPorCola.has(usuario)) {
+    avisadosPorCola.add(usuario);
+    setTimeout(() => avisadosPorCola.delete(usuario), 60_000).unref();
+    console.warn(`Cola llena para ...${usuario.slice(-4)}: se ignoran mensajes hasta que avance.`);
+  }
+  return promesa;
 }
 
 // ==========================================
@@ -305,11 +312,7 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
       iaFallo = true;
       respuestas.push('ℹ️ La IA no respondió a tiempo, pero esto lo pude resolver sin ella:');
     } else {
-      respuestas.push(
-        '😕 La IA no respondió ahora mismo. ' +
-        'Intenta de nuevo en un momento o usa un comando, por ejemplo:\n' +
-        '/gasto 20000 comida almuerzo'
-      );
+      respuestas.push(mensajeErrorIA(e));
     }
   }
 
@@ -405,7 +408,7 @@ async function atenderAudio(sock, jid, msg, usuario) {
   } catch (error) {
     console.error('No se pudo transcribir la nota de voz:', error.message);
     db.marcarProcesado(`${usuario}:${msg.key.id}`);
-    await enviarTexto(sock, jid, '🎙️ No pude procesar ese audio ahora mismo. Intenta de nuevo o escríbeme el gasto.', msg);
+    await enviarTexto(sock, jid, `🎙️ ${error.codigo ? mensajeErrorIA(error, { sufijo: 'Escríbeme el gasto, por ejemplo: "compré aceite por 20 mil".' }) : 'No pude procesar ese audio ahora mismo. Intenta de nuevo o escríbeme el gasto.'}`, msg);
     return;
   }
   if (!transcripcion) {
@@ -450,7 +453,7 @@ async function atenderImagenEnBase(sock, jid, msg, usuario) {
     await enviarTexto(sock, jid, media.textoConfirmacionRecibo(lectura, media.posibleDuplicado(usuario, lectura.item)), msg);
   } catch (error) {
     console.error('No se pudo leer la imagen:', error.message);
-    await cerrar('🧾 No pude leer esa imagen ahora mismo. Intenta de nuevo o escríbeme el gasto.');
+    await cerrar(error.codigo ? `🧾 ${mensajeErrorIA(error, { sufijo: 'Escríbeme el gasto, por ejemplo: "gasté 45 mil en el mercado".' })}` : '🧾 No pude leer esa imagen ahora mismo. Intenta de nuevo o escríbeme el gasto.');
   }
 }
 
@@ -666,7 +669,7 @@ async function iniciar() {
         if (cuenta.estado !== 'activo') continue;
 
         if (esNueva) {
-          encolar(() => enviarTexto(sock, jid, BIENVENIDA, msg));
+          encolar(usuario, () => enviarTexto(sock, jid, BIENVENIDA, msg));
           // Un saludo suelto no se procesa; un mensaje con cifras o un comando, sí
           if (!/\d|^\//.test(texto)) continue;
         }
@@ -690,7 +693,7 @@ async function iniciar() {
           if (DEBUG) console.log(`[debug] Mensaje sin texto recibido: ${tipo}`);
 
           if (TIPOS_MEDIA.has(tipo)) {
-            encolar(() =>
+            encolar(usuario, () =>
               responderSinTexto(sock, jid, msg, usuario)
             );
           }
@@ -704,12 +707,12 @@ async function iniciar() {
           if (!avisadosPorExceso.has(usuario)) {
             avisadosPorExceso.add(usuario);
             setTimeout(() => avisadosPorExceso.delete(usuario), 60 * 1000).unref();
-            encolar(() => enviarTexto(sock, jid, '⏳ Vas muy rápido. Espera un minuto y vuelve a escribirme.', msg));
+            encolar(usuario, () => enviarTexto(sock, jid, '⏳ Vas muy rápido. Espera un minuto y vuelve a escribirme.', msg));
           }
           continue;
         }
 
-        encolar(() =>
+        encolar(usuario, () =>
           atender(sock, jid, msg, usuario, texto)
         );
       }
@@ -781,7 +784,7 @@ async function apagar(signal) {
     await new Promise((resolve) => setImmediate(resolve));
   }
   // Deja que termine el trabajo ya encolado antes de cerrar la conexión SQLite.
-  await cola;
+  await colas.esperarTodo();
   if (servidorApi?.listening) {
     await new Promise((resolve) => servidorApi.close(resolve));
   }
