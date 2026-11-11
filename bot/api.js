@@ -8,7 +8,9 @@ import { CATEGORIAS } from './categorias.js';
 import { fechaBogota, rangoMes, valida } from './fechas.js';
 import * as acceso from './acceso.js';
 import { validarMovimiento } from './movimientos.js';
-import { crearLimitador, entero } from './limites.js';
+import { entero } from './limites.js';
+import { crearLimitadorPersistente as crearLimitador } from './limites-sqlite.js';
+import { isIP } from 'node:net';
 
 // =====================================================
 // CONFIGURACIÓN
@@ -25,7 +27,11 @@ export function crearServidorApi({ enviar } = {}) {
     return null;
   }
 
-  const limiteEscrituras = crearLimitador({ max: entero('MAX_ESCRITURAS_MINUTO', 30), ventanaMs: 60_000 });
+  if (process.env.NODE_ENV === 'production' && (token.length < 32 || (process.env.SECRETO_SESION?.length ?? 0) < 32 || token === process.env.SECRETO_SESION)) {
+    throw new Error('Producción requiere API_TOKEN y SECRETO_SESION independientes de al menos 32 caracteres.');
+  }
+
+  const limiteEscrituras = crearLimitador({ ambito: 'api:escrituras', max: entero('MAX_ESCRITURAS_MINUTO', 30), ventanaMs: 60_000 });
   const puerto = Number(process.env.API_PUERTO ?? 3001);
   const host = process.env.API_HOST ?? '127.0.0.1';
   const origenConfigurado =
@@ -59,13 +65,15 @@ export function crearServidorApi({ enviar } = {}) {
   function tokenValido(cabecera) {
     if (typeof cabecera !== 'string') return false;
 
-    const esperado = Buffer.from(`Bearer ${token}`, 'utf8');
     const recibido = Buffer.from(cabecera, 'utf8');
-
-    return (
-      esperado.length === recibido.length &&
-      crypto.timingSafeEqual(esperado, recibido)
-    );
+    const tokens = [token, process.env.API_TOKEN_ANTERIOR?.trim()].filter(Boolean);
+    let valido = false;
+    for (const clave of tokens) {
+      const esperado = Buffer.from(`Bearer ${clave}`, 'utf8');
+      const coincide = esperado.length === recibido.length && crypto.timingSafeEqual(esperado, recibido);
+      valido = coincide || valido;
+    }
+    return valido;
   }
 
   // ---------------------------------------------------
@@ -107,7 +115,10 @@ export function crearServidorApi({ enviar } = {}) {
   async function rutaInterna(req, res, ruta, cabeceras) {
     let cuerpo;
     try { cuerpo = await leerJson(req); } catch { responder(res, 400, { ok: false }, cabeceras); return; }
-    const ip = String(req.headers['x-cliente-ip'] ?? '?').slice(0, 64);
+    // Solo se usa después de autenticar el Bearer del servidor web.
+    const candidata = req.headers['x-cliente-ip'];
+    const ip = typeof candidata === 'string' && isIP(candidata) ? candidata : '?';
+    if (!cuerpo || typeof cuerpo !== 'object' || Array.isArray(cuerpo)) { responder(res, 400, { ok: false }, cabeceras); return; }
 
     switch (ruta) {
       case '/interno/codigo': {
@@ -187,6 +198,9 @@ export function crearServidorApi({ enviar } = {}) {
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
       'Content-Type': 'application/json; charset=utf-8',
       'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'no-referrer',
       Vary: 'Origin',
     };
 
@@ -312,13 +326,14 @@ export function crearServidorApi({ enviar } = {}) {
         // ---------------------------------------------
 
         case '/api/deudas': {
-          const personas = db.resumenDeudas(usuario).map((p) => ({
+          const estado = finanzas.deudas(usuario);
+          const personas = estado.todas.map((p) => ({
             persona: p.persona,
             saldo: p.saldo,
             historial: db.historialDeuda(usuario, p.clave, 5),
           }));
           responder(res, 200, {
-            total: finanzas.deudas(usuario).total,
+            total: estado.total,
             personas,
           }, cabeceras);
           return;
@@ -363,6 +378,21 @@ export function crearServidorApi({ enviar } = {}) {
         // ---------------------------------------------
         // Resumen mensual
         // ---------------------------------------------
+
+        // Un solo viaje HTTP para el gráfico mensual (máximo 12 periodos).
+        case '/api/resumenes': {
+          const meses = (parametros.get('meses') ?? '').split(',');
+          if (meses.length > 12 || meses.some((m) => !/^\d{4}-(0[1-9]|1[0-2])$/.test(m) || Number(m.slice(0, 4)) < 1000) || new Set(meses).size !== meses.length) {
+            responder(res, 400, { error: 'Indica entre 1 y 12 meses distintos AAAA-MM' }, cabeceras);
+            return;
+          }
+          const resumenes = meses.map((mes) => {
+            const { desde, hasta } = rangoMes(mes);
+            return { mes, desde, hasta, ...finanzas.operativo(usuario, desde, hasta) };
+          });
+          responder(res, 200, resumenes, cabeceras);
+          return;
+        }
 
         case '/api/resumen': {
           if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(mes) || Number(mes.slice(0, 4)) < 1000) {
@@ -581,6 +611,12 @@ export function crearServidorApi({ enviar } = {}) {
       }
     }
   });
+
+  servidor.requestTimeout = 15_000;
+  servidor.headersTimeout = 10_000;
+  servidor.keepAliveTimeout = 5_000;
+  servidor.maxRequestsPerSocket = 100;
+  servidor.maxHeadersCount = 40;
 
   servidor.on('error', (error) => {
     console.error(

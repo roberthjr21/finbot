@@ -17,10 +17,12 @@ import { interpretarComando, atajoSinIA, pideGuia, GUIA } from './comandos.js';
 import { ejecutar } from './acciones.js';
 import { responderAnalisis } from './analisis.js';
 import { iniciarApi } from './api.js';
-import { acotarAcciones, sinConfirmaciones } from './politicas.js';
+import { acotarAcciones, sinConfirmaciones, registroAbierto } from './politicas.js';
 import { temaDeGuia } from './consejos.js';
 import { tieneDecimalConPunto } from './montos.js';
-import { crearLimitador, entero } from './limites.js';
+import { entero } from './limites.js';
+import { crearLimitadorPersistente as crearLimitador } from './limites-sqlite.js';
+import { acumularMedia } from './recursos.js';
 import * as acceso from './acceso.js';
 import { programarRespaldos } from './respaldos.js';
 import * as contexto from './contexto.js';
@@ -41,9 +43,8 @@ const PERMITIDOS = (process.env.NUMEROS_PERMITIDOS ?? '')
   .map((n) => n.replace(/\D/g, ''))
   .filter(Boolean);
 
-// Registro abierto (por defecto): cualquier persona que escriba al bot desde un chat individual
-// obtiene su propia cuenta. Con REGISTRO_ABIERTO=0 solo usan el bot los NUMEROS_PERMITIDOS.
-const REGISTRO_ABIERTO = process.env.REGISTRO_ABIERTO !== '0';
+// Solo REGISTRO_ABIERTO=1 habilita altas públicas; cualquier otro valor cierra el acceso.
+const REGISTRO_ABIERTO = registroAbierto();
 const BLOQUEADOS = (process.env.NUMEROS_BLOQUEADOS ?? '')
   .split(',')
   .map((n) => n.replace(/\D/g, ''))
@@ -53,7 +54,7 @@ const BLOQUEADOS = (process.env.NUMEROS_BLOQUEADOS ?? '')
 const MAX_MENSAJES_MINUTO = entero('MAX_MENSAJES_MINUTO', 20);
 const MAX_MENSAJES_DIA = entero('MAX_MENSAJES_DIA', 300);
 const MAX_IA_DIA = entero('MAX_IA_DIA', 150);
-const limitadorMensajes = crearLimitador({ max: MAX_MENSAJES_MINUTO, ventanaMs: 60 * 1000 });
+const limitadorMensajes = crearLimitador({ ambito: 'whatsapp:mensajes', max: MAX_MENSAJES_MINUTO, ventanaMs: 60 * 1000 });
 const avisadosPorExceso = new Set();
 
 const DEBUG = process.env.DEBUG === '1';
@@ -75,11 +76,18 @@ let remitentesNoAutorizados = 0;
 // ==========================================
 
 let cola = Promise.resolve();
+let pendientes = 0;
 
 function encolar(tarea) {
+  if (cerrando || pendientes >= 200) {
+    console.warn('Cola de mensajes llena o en cierre; mensaje no procesado.');
+    return cola;
+  }
+  pendientes++;
   cola = cola
     .then(tarea)
-    .catch((e) => console.error('Error en la cola:', e));
+    .catch((e) => console.error('Error en la cola:', e.message))
+    .finally(() => { pendientes--; });
 
   return cola;
 }
@@ -183,7 +191,7 @@ async function enviarTexto(sock, jid, texto, citado) {
 // opciones.origen = 'voz' cuando el texto viene de una nota de voz transcrita: los movimientos
 // que se entiendan se confirman con la persona antes de guardarse.
 async function atender(sock, jid, msg, usuario, texto, opciones = {}) {
-  const comandoPrueba = interpretarPrueba(texto);
+  const comandoPrueba = !opciones.origen && interpretarPrueba(texto);
   if (comandoPrueba) {
     await enviarTexto(sock, jid, responderPrueba(usuario, comandoPrueba), msg);
     return;
@@ -229,7 +237,7 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
   const respuestas = [];
 
   try {
-    const comando = texto.startsWith('/')
+    const comando = !opciones.origen && texto.startsWith('/')
       ? interpretarComando(texto)
       : null;
 
@@ -244,7 +252,7 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
       respuestas.push(comando.respuesta);
     } else if (comando) {
       acciones = comando.acciones;
-    } else if (texto.startsWith('/')) {
+    } else if (!opciones.origen && texto.startsWith('/')) {
       respuestas.push(
         'No conozco ese comando. Escribe /ayuda para ver los disponibles.'
       );
@@ -381,7 +389,8 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
 // ==========================================
 
 async function descargar(sock, msg) {
-  return downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+  const stream = await downloadMediaMessage(msg, 'stream', { options: { timeout: 15_000 } }, { logger: pino({ level: 'silent' }), reuploadRequest: sock.updateMediaMessage });
+  return acumularMedia(stream, media.maxBytes());
 }
 
 // Nota de voz: se transcribe y el texto sigue el mismo camino que un mensaje escrito (con confirmación).
@@ -685,6 +694,17 @@ async function iniciar() {
           continue;
         }
 
+        // Límite de mensajes por minuto, con un solo aviso por ventana
+        const limite = limitadorMensajes.intentar(usuario);
+        if (!limite.ok) {
+          if (!avisadosPorExceso.has(usuario)) {
+            avisadosPorExceso.add(usuario);
+            setTimeout(() => avisadosPorExceso.delete(usuario), 60 * 1000).unref();
+            encolar(() => enviarTexto(sock, jid, '⏳ Vas muy rápido. Espera un minuto y vuelve a escribirme.', msg));
+          }
+          continue;
+        }
+
         if (!texto) {
           const tipo = tipoDe(msg);
           if (DEBUG) console.log(`[debug] Mensaje sin texto recibido: ${tipo}`);
@@ -695,17 +715,6 @@ async function iniciar() {
             );
           }
 
-          continue;
-        }
-
-        // Límite de mensajes por minuto, con un solo aviso por ventana
-        const limite = limitadorMensajes.intentar(usuario);
-        if (!limite.ok) {
-          if (!avisadosPorExceso.has(usuario)) {
-            avisadosPorExceso.add(usuario);
-            setTimeout(() => avisadosPorExceso.delete(usuario), 60 * 1000).unref();
-            encolar(() => enviarTexto(sock, jid, '⏳ Vas muy rápido. Espera un minuto y vuelve a escribirme.', msg));
-          }
           continue;
         }
 

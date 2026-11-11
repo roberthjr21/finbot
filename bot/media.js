@@ -155,7 +155,11 @@ export function separarRegistros(acciones, hoy = fechaBogota()) {
   let descartados = 0;
   const resto = [];
   for (const a of acciones ?? []) {
-    if (a?.nombre !== 'registrar_movimiento') { resto.push(a); continue; }
+    if (a?.nombre !== 'registrar_movimiento') {
+      if (['consultar_saldo', 'consultar_resumen', 'ultimos_movimientos', 'consultar_deudas', 'consultar_prestamos', 'ver_presupuestos', 'ver_recordatorios', 'ver_recurrentes', 'ver_metas', 'mostrar_guia_financiera'].includes(a?.nombre)) resto.push(a);
+      else descartados++;
+      continue;
+    }
     const d = a.datos ?? {};
     const fecha = valida(d.fecha) && d.fecha <= hoy ? d.fecha : hoy;
     const v = validarMovimiento({ tipo: d.tipo, monto: d.monto, categoria: d.categoria, fecha, descripcion: String(d.descripcion ?? '').slice(0, 120) }, { hoy });

@@ -2,7 +2,7 @@
 
 Le escribes por WhatsApp en lenguaje normal ("compré aceite por 20 mil") y el bot lo
 registra en una base de datos SQLite. También te hace resúmenes, controla presupuestos
-y expone una API de solo lectura para que tu página web muestre los datos.
+y expone una API autenticada de consulta y escritura para el panel web.
 
 ```
 Tu WhatsApp ──► bot.js (Baileys) ──► ia.js (Claude interpreta)  ──► acciones.js ──► finanzas.db
@@ -121,7 +121,7 @@ Deudas (libreta de lo que debes):
 
 ## Varias personas (multiusuario)
 
-Cualquier persona puede escribir al mismo número del bot. **La primera vez que alguien escribe desde un chat individual se le crea una cuenta propia**, con saldo $0 (sin ningún movimiento inventado) y un mensaje de bienvenida. Si ya tiene cuenta, se usa esa. Cada cuenta tiene un id interno estable (para las sesiones web) y su número de WhatsApp normalizado (único), que es la clave de sus datos; movimientos, presupuestos, deudas, análisis y saldo se calculan siempre solo con los datos de esa cuenta.
+Las personas admitidas pueden escribir al mismo número del bot. **La primera vez que una persona admitida escribe desde un chat individual se le crea una cuenta propia**, con saldo $0 (sin ningún movimiento inventado) y un mensaje de bienvenida. Si ya tiene cuenta, se usa esa. Cada cuenta tiene un id interno estable (para las sesiones web) y su número de WhatsApp normalizado (único), que es la clave de sus datos; movimientos, presupuestos, deudas, análisis y saldo se calculan siempre solo con los datos de esa cuenta.
 
 - La cuenta sale **siempre del remitente real del mensaje** (nunca del texto que escriba). Grupos, estados, canales (newsletters) y mensajes propios del bot no crean cuentas.
 - Si WhatsApp entrega solo un identificador LID y no se puede resolver el número de teléfono, el mensaje se ignora (no se crea cuenta).
@@ -131,13 +131,13 @@ Variables nuevas (todas opcionales):
 
 | Variable | Por defecto | Efecto |
 |---|---|---|
-| `REGISTRO_ABIERTO` | `1` | `1`: cualquier número nuevo recibe cuenta al escribir. `0`: solo existentes y los de `NUMEROS_PERMITIDOS`. |
-| `NUMEROS_PERMITIDOS` | (vacío) | Números que siempre pueden usar el bot (el propietario); sus cuentas se crean al arrancar. Ya no es obligatorio. |
+| `REGISTRO_ABIERTO` | `0` | Solo `1` habilita acceso público. En cualquier otro caso solo acceden los números de `NUMEROS_PERMITIDOS`, incluso si ya tienen cuenta. |
+| `NUMEROS_PERMITIDOS` | (vacío) | Números admitidos con registro cerrado; sus cuentas se crean al recibir su primer mensaje reciente. |
 | `NUMEROS_BLOQUEADOS` | (vacío) | Números que el bot ignora siempre. |
 | `MAX_MENSAJES_MINUTO` | `20` | Mensajes por minuto por persona. |
 | `MAX_MENSAJES_DIA` | `300` | Mensajes por día por persona. |
 | `MAX_IA_DIA` | `150` | Consultas a la IA por día por persona; al agotarlas siguen funcionando los comandos y atajos. |
-| `SECRETO_SESION` | `API_TOKEN` | Clave con la que se guardan los códigos de acceso (HMAC). Cámbiala si quieres separarla del token. |
+| `SECRETO_SESION` | Solo desarrollo: `API_TOKEN` | En producción es obligatoria e independiente, de al menos 32 caracteres. Firma los códigos con HMAC. |
 
 **Migración.** Al arrancar con una base anterior, el bot primero hace una copia verificada de `finanzas.db` (junto a ella, con nombre `finanzas.db.antes-multiusuario-FECHA.db`) y luego crea la tabla `usuarios` (id interno estable + número de WhatsApp único, que usan las sesiones web) y una cuenta por cada número que ya tenía datos. Las tablas de datos siguen ligadas por ese número de WhatsApp (columna `usuario`), así que tus datos actuales quedan en tu cuenta sin reasignar ni adivinar ningún dueño. Si la copia falla, el bot no arranca.
 
@@ -237,3 +237,19 @@ La restauración conserva el archivo original. Detén el bot antes de restaurar 
   registra con la fecha en que los escribiste.
 - Es una herramienta de registro y organización. Las respuestas generales no son asesoría
   financiera.
+
+## Operación segura
+
+- Define `NODE_ENV=production` y secretos independientes de 32+ caracteres antes de iniciar la API. No se arranca la API con configuración insegura de producción.
+- Mantén `API_HOST=127.0.0.1` detrás de un túnel o proxy HTTPS autenticado. La cabecera `X-Cliente-Ip` solo se acepta tras verificar el Bearer del servidor web; no es una credencial ni autoriza una cuenta. No se confía en otras cabeceras de IP entrantes.
+- Para rotar la clave de API, coloca temporalmente la anterior en `API_TOKEN_ANTERIOR`, cambia `API_TOKEN`, reinicia el bot, actualiza `BOT_API_TOKEN` en la web, comprueba salud y acceso, y retira la anterior. No mantengas claves comprometidas. Rotar `SECRETO_SESION` invalida códigos pendientes, pero las sesiones usan hashes independientes: revócalas explícitamente si existe un incidente.
+- Los límites sensibles usan SQLite y `BEGIN IMMEDIATE`; las verificaciones de códigos y creación de sesión son atómicas entre procesos. Los registros vencidos se purgan por lotes de 1000, con índices; los intentos rechazados no añaden filas.
+- La cola admite como máximo 200 trabajos pendientes. Con saturación se registra un aviso y los mensajes descartados no quedan marcados como procesados. Las descargas multimedia se cortan a los 15 segundos o al superar el tamaño configurado. Las respuestas de IA no pueden superar 512 KiB y sus errores no registran el contenido devuelto por el proveedor.
+- Audios: solo los movimientos validados pueden quedar pendientes; no ejecutan comandos ni abonos, préstamos o borrados automáticamente. Las otras operaciones se pueden escribir con los comandos habituales. Las confirmaciones destructivas siguen requiriendo texto explícito.
+- `/abono todo Persona` conserva el pago total; un abono sin monto pide aclaración. Borrar gastos se bloquea si hay cobros de préstamos: evita saldos negativos en la libreta. No se alteran automáticamente registros históricos para corregir inconsistencias existentes.
+
+### Respaldos y recuperación
+
+Con el bot detenido, ejecuta `node db-admin.js restore respaldos/copia.db finanzas-restaurada.db`. Valida la copia y configura `DB_ARCHIVO` hacia la ruta restaurada; conserva la original. Reinicia solo una instancia de WhatsApp. Un respaldo contiene datos personales, hashes de sesión y límites de acceso: usa permisos de archivo 0600, directorio privado, cifrado del disco y una copia externa cifrada. Las copias locales verificadas no sustituyen esa copia externa. Nunca restaures sobre una base abierta.
+
+Si SQLite devuelve `SQLITE_BUSY`, comprueba procesos duplicados, disco y permisos; no borres los archivos WAL/SHM de una base en uso. Si una migración falla, conserva su respaldo y el log, detén el servicio y valida una copia antes de reintentar. Las migraciones nuevas son aditivas y se respaldan antes de aplicarse cuando existen datos financieros.

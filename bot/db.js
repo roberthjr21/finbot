@@ -172,7 +172,7 @@ db.exec(`
 `);
 
 // Migraciones versionadas (tablas nuevas, siempre aditivas y con copia verificada antes)
-migrar(db, archivoDB);
+// Se ejecuta al final, después de completar todas las tablas del esquema base.
 
 // --- Mensajes ya atendidos (para no registrar dos veces lo mismo) ---
 export function yaProcesado(id) {
@@ -199,6 +199,7 @@ export function enTransaccion(tarea) {
   db.exec(anidada ? `SAVEPOINT ${nombre}` : 'BEGIN IMMEDIATE');
   try {
     const resultado = tarea();
+    if (resultado && typeof resultado.then === 'function') throw new Error('Una transacción SQLite debe ser síncrona');
     db.exec(anidada ? `RELEASE SAVEPOINT ${nombre}` : 'COMMIT');
     return resultado;
   } catch (error) {
@@ -267,6 +268,11 @@ export function ultimoMovimientoBorrable(usuario) {
 }
 
 export function borrarMovimiento(usuario, id) {
+  return enTransaccion(() => borrarMovimientoAtomico(usuario, id));
+}
+
+function borrarMovimientoAtomico(usuario, id) {
+  if (prestamoProtegido(usuario, id)) return null;
   const fila = db.prepare(
     `SELECT id, tipo, monto, categoria, descripcion, fecha
        FROM movimientos WHERE usuario = ? AND id = ?
@@ -306,8 +312,9 @@ export function listarAuditoria(usuario, limite = 50) {
 export function editarMovimiento(usuario, id, cambios, origen = 'web') {
   return enTransaccion(() => {
     const antes = obtenerMovimiento(usuario, id);
-    if (!antes) return null;
+    if (!antes || antes.ligado) return null;
     const campos = ['tipo', 'monto', 'categoria', 'descripcion', 'fecha'].filter((c) => cambios[c] !== undefined);
+    if (!campos.length) return null;
     db.prepare(`UPDATE movimientos SET ${campos.map((c) => `${c} = ?`).join(', ')} WHERE usuario = ? AND id = ?`)
       .run(...campos.map((c) => cambios[c]), usuario, id);
     const despues = obtenerMovimiento(usuario, id);
@@ -320,7 +327,7 @@ export function editarMovimiento(usuario, id, cambios, origen = 'web') {
 export function eliminarMovimiento(usuario, id, origen = 'web') {
   return enTransaccion(() => {
     const fila = obtenerMovimiento(usuario, id);
-    if (!fila) return null;
+    if (!fila || fila.ligado) return null;
     db.prepare('DELETE FROM movimientos WHERE usuario = ? AND id = ?').run(usuario, id);
     registrarAuditoria({ usuario, accion: 'eliminar', entidad: 'movimiento', entidadId: id, origen, detalle: { ...fila, ligado: undefined } });
     return fila;
@@ -516,7 +523,11 @@ export function usoDelDia(usuario, dia) {
 }
 
 // --- Acceso web: códigos y sesiones (ahora = segundos desde 1970) ---
-export function guardarCodigo({ usuarioId, hash, ahora, expira }) {
+export function guardarCodigo(datos) {
+  return enTransaccion(() => guardarCodigoAtomico(datos));
+}
+
+function guardarCodigoAtomico({ usuarioId, hash, ahora, expira }) {
   // Un código nuevo invalida los anteriores
   db.prepare('UPDATE codigos_login SET usado = 1 WHERE usuario_id = ? AND usado = 0').run(usuarioId);
   db.prepare('INSERT INTO codigos_login (usuario_id, hash, creado, expira) VALUES (?, ?, ?, ?)').run(usuarioId, hash, ahora, expira);
@@ -604,6 +615,16 @@ export function contarBorrado(usuario, alcance) {
 
 // Borra de verdad. Solo toca filas de este usuario. Debe llamarse dentro de una transacción.
 export function borrarDatos(usuario, alcance) {
+  return enTransaccion(() => borrarDatosAtomico(usuario, alcance));
+}
+
+function borrarDatosAtomico(usuario, alcance) {
+  // Borrar solo gastos podría dejar cobros sin el préstamo que los respalda.
+  if (alcance === 'gastos' && db.prepare("SELECT 1 FROM prestamos WHERE usuario = ? AND tipo = 'pago' LIMIT 1").get(usuario)) {
+    const error = new Error('No se pueden borrar los gastos mientras haya cobros de préstamos. Revisa los préstamos o elige borrar todos los movimientos.');
+    error.code = 'INTEGRIDAD_FINANCIERA';
+    throw error;
+  }
   const cantidades = contarBorrado(usuario, alcance);
   const filtro = filtroTipo(alcance);
   const ligadas = (tabla) => db.prepare(
@@ -716,3 +737,6 @@ export function prestamoProtegido(usuario, movimientoId) {
     .get(usuario, fila.clave);
   return Number(saldo) - fila.monto < 0 ? fila.persona : null;
 }
+
+// Todas las tablas base ya existen; las migraciones aditivas pueden referenciarlas.
+migrar(db, archivoDB);

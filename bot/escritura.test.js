@@ -195,3 +195,38 @@ test('GET /api/movimiento: devuelve el propio y da 404 para el de otra cuenta', 
   const basura = await fetch(`${base}/api/movimiento?id=abc`, { headers: { Authorization: 'Bearer secreto-de-prueba', 'X-Sesion': tA } });
   assert.equal(basura.status, 404);
 });
+
+test('histórico por lotes conserva las cifras, limita recursos y exige sesión propia', async () => {
+  const token = await sesion(A);
+  const pedir = (ruta, sesionToken = token) => fetch(base + ruta, { headers: { Authorization: 'Bearer secreto-de-prueba', 'X-Sesion': sesionToken } });
+  const meses = ['2026-09', '2026-10', '2026-11'];
+  const lote = await (await pedir(`/api/resumenes?meses=${meses.join(',')}`)).json();
+  const individuales = await Promise.all(meses.map(async mes => (await pedir(`/api/resumen?mes=${mes}`)).json()));
+  assert.deepEqual(lote, individuales);
+  assert.equal((await pedir('/api/resumenes?meses=2026-11,2026-11')).status, 400);
+  assert.equal((await pedir('/api/resumenes?meses=invalid')).status, 400);
+  assert.equal((await pedir('/api/resumenes?meses=2026-11', 'inventada')).status, 401);
+});
+
+test('rotación de API acepta temporalmente la clave anterior y la rechaza al retirarla', async () => {
+  const anterior = 'anterior-exclusiva-de-pruebas-123456789';
+  const pedir = () => fetch(base + '/api/salud', { headers: { Authorization: `Bearer ${anterior}` } });
+  process.env.API_TOKEN_ANTERIOR = anterior;
+  try { assert.equal((await pedir()).status, 200); }
+  finally { delete process.env.API_TOKEN_ANTERIOR; }
+  assert.equal((await pedir()).status, 401);
+});
+
+test('producción rechaza claves cortas, ausentes o compartidas entre API y códigos', () => {
+  const previo = { NODE_ENV: process.env.NODE_ENV, API_TOKEN: process.env.API_TOKEN, SECRETO_SESION: process.env.SECRETO_SESION };
+  try {
+    process.env.NODE_ENV = 'production';
+    assert.throws(() => crearServidorApi(), /Producción requiere/);
+    process.env.API_TOKEN = 'a'.repeat(40); process.env.SECRETO_SESION = process.env.API_TOKEN;
+    assert.throws(() => crearServidorApi(), /independientes/);
+    process.env.SECRETO_SESION = 'b'.repeat(40);
+    const seguro = crearServidorApi(); assert.ok(seguro); seguro.close();
+  } finally {
+    for (const [k, v] of Object.entries(previo)) if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
+});

@@ -1,3 +1,4 @@
+import { leerJsonAcotado } from './http-seguro.js';
 import { CATEGORIAS } from './categorias.js';
 import { montoMaximo } from './montos.js';
 
@@ -263,7 +264,7 @@ async function solicitarConReintento(url, opciones, { intentos = 2 } = {}) {
   for (let intento = 1; ; intento++) {
     let res;
     try {
-      res = await fetch(url, { ...opciones, signal: AbortSignal.timeout(tiempoIntento()) });
+      res = await fetch(url, { ...opciones, redirect: 'error', signal: AbortSignal.timeout(tiempoIntento()) });
     } catch (e) {
       const error = ['TimeoutError', 'AbortError'].includes(e?.name) ? new Error('La IA no respondió a tiempo') : e;
       if (intento >= intentos) throw error;
@@ -277,8 +278,8 @@ async function solicitarConReintento(url, opciones, { intentos = 2 } = {}) {
 }
 
 async function leerError(res) {
-  const detalle = await res.text().catch(() => '');
-  return new Error(`API ${res.status}: ${detalle.slice(0, 200)}`);
+  await res.body?.cancel().catch(() => {});
+  return new Error(`API ${res.status}: el proveedor rechazó la petición`);
 }
 
 // Modelos de Gemini en orden de preferencia: el principal y, después, el de respaldo.
@@ -323,7 +324,7 @@ export async function pedirAGemini(cuerpo) {
       continue;
     }
 
-    if (res.ok) return res.json();
+    if (res.ok) return leerJsonAcotado(res);
 
     ultimoError = await leerError(res);
     if (res.status !== 404 && !esTemporal(res.status)) throw ultimoError;
@@ -416,7 +417,7 @@ async function conClaude(texto, hoy) {
   });
   if (!res.ok) throw await leerError(res);
 
-  const bloques = (await res.json()).content ?? [];
+  const bloques = (await leerJsonAcotado(res)).content ?? [];
   return {
     acciones: bloques
       .filter((b) => b.type === 'tool_use')
@@ -495,7 +496,7 @@ async function analisisConClaude(datos, hoy) {
   });
   if (!res.ok) throw await leerError(res);
 
-  return ((await res.json()).content ?? [])
+  return ((await leerJsonAcotado(res)).content ?? [])
     .filter((b) => b.type === 'text')
     .map((b) => b.text)
     .join('\n')

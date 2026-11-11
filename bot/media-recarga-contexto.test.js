@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {contextoRecarga,continuarRecarga,textoInicioRecarga} from './media.js';
+process.env.DB_ARCHIVO = ':memory:';
+const { contextoRecarga, continuarRecarga, textoInicioRecarga } = await import('./media.js');
 const p=contextoRecarga({es_recibo:true,tipo_operacion:'recarga',total:75000,fecha:'2026-11-09',comercio:'Bancolombia'},'2026-11-09');
 test('retiene monto de recarga y pregunta concepto',()=>{const r=continuarRecarga(p,'Me pasaron esa plata a mi cuenta');assert.match(r.texto,/75.000/);assert.equal(r.pendiente.etapa,'concepto');});
 test('confirma ingreso solo después del concepto',()=>{const a=continuarRecarga(p,'me pasaron esa plata');const b=continuarRecarga(a.pendiente,'una venta');assert.equal(b.pendiente.etapa,'confirmar');assert.equal(continuarRecarga(b.pendiente,'no').accion,undefined);const c=continuarRecarga(b.pendiente,'sí');assert.equal(c.accion.datos.monto,75000);assert.equal(c.accion.datos.categoria,'Ventas');});
