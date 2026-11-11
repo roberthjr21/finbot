@@ -30,7 +30,7 @@ FinBot utiliza inicio de sesión individual mediante un código enviado por What
 - El código vence a los 5 minutos, se puede utilizar una sola vez y admite hasta 5 intentos.
 - La sesión web dura 7 días.
 - La sesión se guarda en una cookie protegida; el navegador no recibe el token privado de la API.
-- Cerrar sesión revoca la sesión en el bot y elimina la cookie.
+- Cerrar sesión revoca la sesión en el bot y elimina la cookie únicamente cuando se confirma la revocación. Si el bot está caído, se informa el error y se permite reintentar.
 - Si el número no tiene una cuenta, la respuesta no revela si ese número está registrado.
 
 La configuración de registro abierto o restringido se controla desde el bot. Revisa `REGISTRO_ABIERTO`, `NUMEROS_PERMITIDOS` y `NUMEROS_BLOQUEADOS` en `bot/.env.example`.
@@ -123,7 +123,7 @@ cp .env.example .env.local
 Edita `web/.env.local` y define:
 
 ```dotenv
-BOT_API_URL=http://127.0.0.1:50000
+BOT_API_URL=http://127.0.0.1:3001
 BOT_API_TOKEN=el_mismo_valor_de_API_TOKEN
 ```
 
@@ -164,3 +164,28 @@ Antes de pasar a producción, prueba la conexión desde un entorno de preview co
 
 - [Documentación del bot](bot/README.md)
 - [Documentación de la aplicación web](web/README.md)
+
+## Endurecimiento y validación
+
+El registro está **cerrado por defecto**: configura `NUMEROS_PERMITIDOS`. Solo `REGISTRO_ABIERTO=1` habilita acceso público explícito. En producción define `NODE_ENV=production`, `API_TOKEN` y `SECRETO_SESION` independientes, aleatorios y de al menos 32 caracteres. En la web configura `WEB_ORIGEN=https://tu-dominio` además de las variables del bot; las cookies de producción son Secure.
+
+Los límites de códigos, verificaciones y escrituras viven en SQLite (migración v4), sobreviven a reinicios y reservan contadores dentro de transacciones. La migración v5 conserva snapshots de eliminaciones financieras en auditoría. No elimines estas tablas para desbloquear intentos: espera su vencimiento.
+
+Consulta el [informe de auditoría](docs/AUDITORIA.md) para evidencia, limitaciones y preparación de producción. Las pruebas se ejecutan con bases temporales; no requieren vincular WhatsApp ni cargar credenciales reales.
+
+```sh
+cd bot
+npm ci
+npm test
+npm audit
+cd ../web
+pnpm install --frozen-lockfile
+pnpm test
+pnpm typecheck
+pnpm lint
+pnpm build
+pnpm test:integration
+pnpm audit
+```
+
+La integración arranca dos servidores locales y requiere permiso para escuchar en loopback. No ejecuta el bot de WhatsApp ni despliega aplicaciones. El aviso moderado de minimatch en herramientas de desarrollo se registra en el informe; no se ocultan los resultados de audit.
