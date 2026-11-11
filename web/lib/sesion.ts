@@ -12,7 +12,7 @@ export async function tokenDeSesion() {
 export function configuracionBot() {
   const base = process.env.BOT_API_URL?.trim().replace(/\/+$/, '')
   const token = process.env.BOT_API_TOKEN?.trim()
-  if (!base || !token) return null
+  if (!base || !token || (process.env.NODE_ENV === 'production' && token.length < 32)) return null
   try {
     const url = new URL(base)
     const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)

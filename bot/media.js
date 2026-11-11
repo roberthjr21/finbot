@@ -109,6 +109,11 @@ export function contextoRecarga(lectura, hoy = fechaBogota()) {
   const fecha=valida(lectura.fecha) && lectura.fecha<=hoy ? lectura.fecha : hoy;
   return {monto,fecha,origen:String(lectura.comercio??'').slice(0,60),etapa:'origen'};
 }
+export function textoInicioRecarga(recarga) {
+  return '🧾 Detecté una recarga de ' + pesos(recarga.monto) +
+    (recarga.origen ? ' desde ' + recarga.origen : '') +
+    '. No registré ningún gasto. ¿El dinero vino de otra cuenta tuya o te lo envió otra persona?';
+}
 export function continuarRecarga(p,texto) {
   if (!p || !Number.isInteger(p.monto)) return null;
   const t=String(texto??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
@@ -116,14 +121,20 @@ export function continuarRecarga(p,texto) {
   if (/\b(mi otra cuenta|otra cuenta mia|cuenta propia|de mi cuenta)\b/.test(t))
     return {fin:true,texto:'🔁 Transferencia propia de '+pesos(p.monto)+'. No registré un gasto ni un ingreso.'};
   if (p.etapa==='confirmar') {
-    if (/^(si|confirmo|dale|ok|listo)$/.test(t)) return {fin:true,accion:{nombre:'registrar_movimiento',datos:{tipo:'ingreso',monto:p.monto,fecha:p.fecha,categoria:p.categoria,descripcion:'Transferencia recibida'}}};
+    if (/^(si|confirmo|dale|ok|listo)$/.test(t)) return {fin:true,accion:{nombre:'registrar_movimiento',datos:{tipo:'ingreso',monto:p.monto,fecha:p.fecha,categoria:p.categoria,descripcion:p.descripcion??'Transferencia recibida'}}};
     if (/^(no|cancelar|cancela)$/.test(t)) return {fin:true,texto:'✅ Cancelado. No registré el ingreso.'};
     return {texto:'¿Confirmas registrar '+pesos(p.monto)+' como ingreso? Responde sí o no.'};
   }
   if (/\bprestamo\b/.test(t)) return {fin:true,texto:'🤝 '+pesos(p.monto)+' recibidos como préstamo. No lo registré como ingreso; debe tratarse como deuda.'};
   if (p.etapa==='concepto') {
-    const categoria=/\b(venta|vendi|producto)\b/.test(t)?'Ventas':/\b(salario|nomina|sueldo|trabajo|pago)\b/.test(t)?'Salario':'Otros';
-    return {pendiente:{...p,etapa:'confirmar',categoria},texto:'💰 '+pesos(p.monto)+' · '+categoria+'. ¿Confirmas registrar este ingreso? Responde sí o no.'};
+    if (!/\b(universidad|estudio|estudios|matricula|semestre|beca|colegio|educacion|venta|vendi|producto|salario|nomina|sueldo|trabajo|pago|regalo|ayuda|apoyo|ingreso)\b/.test(t)) {
+      return {texto:'¿Para qué recibiste los '+pesos(p.monto)+'? Por ejemplo: ayuda para la universidad, pago por trabajo, venta o regalo.'};
+    }
+    const categoria=/\b(universidad|estudio|estudios|matricula|semestre|beca|colegio|educacion)\b/.test(t)?'Estudio'
+      :/\b(venta|vendi|producto)\b/.test(t)?'Ventas'
+      :/\b(salario|nomina|sueldo|trabajo|pago)\b/.test(t)?'Salario':'Otros';
+    const descripcion=String(texto??'').replace(/[\u0000-\u001f\u007f]/g,' ').trim().slice(0,100);
+    return {pendiente:{...p,etapa:'confirmar',categoria,descripcion},texto:'💰 '+pesos(p.monto)+' · '+categoria+' ('+descripcion+'). ¿Confirmas registrar este ingreso? Responde sí o no.'};
   }
   if (/\b(me pasaron|me enviaron|me transfirieron|me consignaron|me dieron|otra persona|alguien me|me pagaron|me regalaron)\b/.test(t))
     return {pendiente:{...p,etapa:'concepto'},texto:'💰 Entendido: recibiste '+pesos(p.monto)+' de otra persona. ¿Fue un regalo, un pago, una venta u otro concepto?'};
@@ -144,7 +155,11 @@ export function separarRegistros(acciones, hoy = fechaBogota()) {
   let descartados = 0;
   const resto = [];
   for (const a of acciones ?? []) {
-    if (a?.nombre !== 'registrar_movimiento') { resto.push(a); continue; }
+    if (a?.nombre !== 'registrar_movimiento') {
+      if (['consultar_saldo', 'consultar_resumen', 'ultimos_movimientos', 'consultar_deudas', 'consultar_prestamos', 'ver_presupuestos', 'ver_recordatorios', 'ver_recurrentes', 'ver_metas', 'mostrar_guia_financiera'].includes(a?.nombre)) resto.push(a);
+      else descartados++;
+      continue;
+    }
     const d = a.datos ?? {};
     const fecha = valida(d.fecha) && d.fecha <= hoy ? d.fecha : hoy;
     const v = validarMovimiento({ tipo: d.tipo, monto: d.monto, categoria: d.categoria, fecha, descripcion: String(d.descripcion ?? '').slice(0, 120) }, { hoy });

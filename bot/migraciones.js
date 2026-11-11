@@ -126,6 +126,38 @@ export const MIGRACIONES = [
       );
     `,
   },
+  {
+    version: 4,
+    nombre: 'limites persistentes de seguridad',
+    sql: `
+      CREATE TABLE IF NOT EXISTS limites_intentos (
+        id INTEGER PRIMARY KEY,
+        ambito TEXT NOT NULL,
+        clave TEXT NOT NULL,
+        instante INTEGER NOT NULL,
+        expira INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_limites_clave ON limites_intentos (ambito, clave, instante);
+      CREATE INDEX IF NOT EXISTS idx_limites_expira ON limites_intentos (expira);
+    `,
+  },
+  { version: 5, nombre: 'historial de eliminaciones financieras', sql: `
+CREATE TRIGGER IF NOT EXISTS auditoria_borrado_movimientos AFTER DELETE ON movimientos
+      BEGIN
+        INSERT INTO auditoria (usuario, accion, entidad, entidad_id, origen, detalle)
+        VALUES (OLD.usuario, 'eliminar_registro', 'movimiento', OLD.id, 'sistema', json_object('id', OLD.id, 'usuario', OLD.usuario, 'tipo', OLD.tipo, 'monto', OLD.monto, 'fecha', OLD.fecha, 'categoria', OLD.categoria, 'descripcion', OLD.descripcion));
+      END;
+CREATE TRIGGER IF NOT EXISTS auditoria_borrado_deudas AFTER DELETE ON deudas
+      BEGIN
+        INSERT INTO auditoria (usuario, accion, entidad, entidad_id, origen, detalle)
+        VALUES (OLD.usuario, 'eliminar_registro', 'deuda', OLD.id, 'sistema', json_object('id', OLD.id, 'usuario', OLD.usuario, 'persona', OLD.persona, 'tipo', OLD.tipo, 'monto', OLD.monto, 'fecha', OLD.fecha, 'movimiento_id', OLD.movimiento_id, 'descripcion', OLD.descripcion));
+      END;
+CREATE TRIGGER IF NOT EXISTS auditoria_borrado_prestamos AFTER DELETE ON prestamos
+      BEGIN
+        INSERT INTO auditoria (usuario, accion, entidad, entidad_id, origen, detalle)
+        VALUES (OLD.usuario, 'eliminar_registro', 'prestamo', OLD.id, 'sistema', json_object('id', OLD.id, 'usuario', OLD.usuario, 'persona', OLD.persona, 'tipo', OLD.tipo, 'monto', OLD.monto, 'fecha', OLD.fecha, 'movimiento_id', OLD.movimiento_id, 'descripcion', OLD.descripcion));
+      END;
+  ` },
 ];
 
 const hayDatos = (db) =>
@@ -162,6 +194,11 @@ export function migrar(db, archivo, migraciones = MIGRACIONES) {
   for (const m of pendientes) {
     db.exec('BEGIN IMMEDIATE');
     try {
+      // Otro proceso pudo aplicar esta versión mientras esperábamos el escritor.
+      if (db.prepare('SELECT 1 FROM schema_migraciones WHERE version = ?').get(m.version)) {
+        db.exec('COMMIT');
+        continue;
+      }
       if (m.sql) db.exec(m.sql);
       db.prepare('INSERT INTO schema_migraciones (version, nombre) VALUES (?, ?)').run(m.version, m.nombre);
       db.exec('COMMIT');

@@ -1,3 +1,4 @@
+import { leerJsonSeguro } from '@/lib/seguridad-http'
 import { ipCliente, origenValido, postBot } from '@/lib/auth-servidor'
 
 // Pide al bot que envíe un código por WhatsApp. La respuesta es la misma tenga o no cuenta el número.
@@ -5,7 +6,7 @@ export async function POST(request: Request) {
   if (!origenValido(request)) return Response.json({ ok: false }, { status: 403 })
   let cuerpo: unknown
   try {
-    cuerpo = await request.json()
+    cuerpo = await leerJsonSeguro(request)
   } catch {
     return Response.json({ ok: false, motivo: 'formato' }, { status: 400 })
   }

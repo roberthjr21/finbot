@@ -100,7 +100,18 @@ function lineaDeuda(d) {
 }
 
 // Ejecuta una acción y devuelve el texto a responder (o null si no hay nada que decir)
-export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
+export function ejecutar(accion, ctx) {
+  return db.enTransaccion(() => {
+    const antes = db.base().prepare('SELECT total_changes() AS n').get().n;
+    const respuesta = ejecutarAtomico(accion, ctx);
+    if (db.base().prepare('SELECT total_changes() AS n').get().n > antes) {
+      db.registrarAuditoria({ usuario: ctx.usuario, accion: accion.nombre, entidad: 'accion', detalle: { mensajeId: ctx.mensajeId, indice: ctx.indice } });
+    }
+    return respuesta;
+  });
+}
+
+function ejecutarAtomico(accion, { usuario, hoy, mensajeId, indice, efectos }) {
   const datos = accion.datos ?? {};
   const diferir = (efecto) => efectos ? efectos.push(efecto) : efecto();
 
@@ -333,7 +344,12 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       const pendiente = borradosPendientes.get(usuario);
       diferir(() => borradosPendientes.delete(usuario));
       if (!pendiente || pendiente.vence < Date.now()) return 'No hay un borrado pendiente. Escribe por ejemplo /borrar ingresos para iniciar uno.';
-      const borrado = db.borrarDatos(usuario, pendiente.alcance);
+      let borrado;
+      try { borrado = db.borrarDatos(usuario, pendiente.alcance); }
+      catch (error) {
+        if (error.code === 'INTEGRIDAD_FINANCIERA') return `⚠️ ${error.message}`;
+        throw error;
+      }
       const total = finanzas.caja(usuario, hoy);
       return `🗑️ Listo, borré ${NOMBRE_ALCANCE[pendiente.alcance]} (${resumenBorrado(borrado)}).\n💼 Ahora tienes ${pesos(total.balance)}.`;
     }
@@ -403,7 +419,7 @@ export function ejecutar(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       if (p.saldo <= 0) return estadoDeuda(p);
 
       // Sin monto (o "todo"), se paga lo que quede
-      const monto = datos.todo === true || datos.monto === undefined ? p.saldo : datos.monto;
+      const monto = datos.todo === true ? p.saldo : datos.monto;
       if (!montoValido(monto)) return '⚠️ No entendí cuánto abonas. Dime el monto, por ejemplo: "abono 20 mil a Juan".';
       if (monto > p.saldo) return `⚠️ Solo le debes ${pesos(p.saldo)} a ${p.persona}; no puedes abonar ${pesos(monto)}. Dime un monto de hasta ${pesos(p.saldo)}.`;
 

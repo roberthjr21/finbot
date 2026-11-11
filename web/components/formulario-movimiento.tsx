@@ -1,3 +1,4 @@
+import { FormularioEnvio } from './formulario-envio'
 import Link from 'next/link'
 
 type Valores = { id?: number; tipo: 'gasto' | 'ingreso'; monto?: number; categoria?: string; fecha: string; descripcion?: string }
@@ -12,7 +13,7 @@ export function FormularioMovimiento({
   etiquetaBoton,
 }: Readonly<{ accion: string; categorias: string[]; valores: Valores; clave?: string; hoy: string; etiquetaBoton: string }>) {
   return (
-    <form className="form-card panel" method="post" action={accion}>
+    <FormularioEnvio className="form-card panel" action={accion}>
       {clave && <input type="hidden" name="clave" value={clave} />}
       {valores.id !== undefined && <input type="hidden" name="id" value={valores.id} />}
       <div className="field-row">
@@ -49,7 +50,7 @@ export function FormularioMovimiento({
         <button className="primary-button" type="submit">{etiquetaBoton}</button>
         <Link className="link-button" href="/movimientos">Cancelar</Link>
       </div>
-    </form>
+    </FormularioEnvio>
   )
 }
 
