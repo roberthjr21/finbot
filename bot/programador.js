@@ -16,6 +16,8 @@ import { entero } from './limites.js';
 
 let corriendo = false;
 let ultimaAlerta = 0;
+let ultimoCicloEn = null;
+let ultimoResultado = null;
 
 const textoRecurrente = (h) =>
   `🔁 Registré tu ${h.tipo === 'gasto' ? 'gasto' : 'ingreso'} recurrente: ${pesos(h.monto)} en ${h.categoria}${h.descripcion ? ` (${h.descripcion})` : ''} · ${h.fecha}`;
@@ -80,6 +82,8 @@ export async function ciclo({ enviar, ahora = new Date() }) {
   } finally {
     corriendo = false;
   }
+  ultimoCicloEn = ahora.toISOString();
+  ultimoResultado = resultado;
   return resultado;
 }
 
@@ -98,3 +102,6 @@ export function iniciarProgramador({ enviar, primeraEsperaMs = 15_000 }) {
 
 // Solo para pruebas
 export const _reiniciar = () => { corriendo = false; ultimaAlerta = 0; };
+
+// Estado del último ciclo, para /diagnostico
+export const estadoProgramador = () => ({ ultimoCiclo: ultimoCicloEn, ultimoResultado });

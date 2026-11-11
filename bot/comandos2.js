@@ -140,6 +140,10 @@ export function interpretarComandoFase2(comando, resto) {
       return { respuesta: 'Usa: /alertas  ·  /alertas presupuestos no  ·  /alertas silencio 23:00 06:00  ·  /alertas maximo 3' };
     }
 
+    case 'diagnostico':
+    case 'estado':
+      return { acciones: [{ nombre: 'ver_diagnostico', datos: {} }] };
+
     // Confirmar o cancelar lo que está pendiente (voz, foto de recibo)
     case 'si':
     case 'confirmar':

@@ -1,3 +1,4 @@
+import { redactar } from './registro.js';
 import { CATEGORIAS } from './categorias.js';
 import { montoMaximo } from './montos.js';
 
@@ -256,19 +257,82 @@ const tiempoIntento = () => numeroEnv('TIEMPO_IA_MS', 15_000) || 15_000;
 const pausa = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const esTemporal = (estado) => estado === 429 || estado >= 500;
 
-// Hace la petición con hasta `intentos` intentos. Solo reintenta los errores temporales
-// (429, 5xx, tiempo agotado o fallo de red), esperando un poco más cada vez.
+// Error de la IA con un código que el bot traduce a un mensaje claro para la persona:
+//   cuota (429) · saturado (5xx) · tiempo (no respondió) · clave (401/403) · otro
+export class ErrorIA extends Error {
+  constructor(mensaje, { codigo = 'otro', estado, reintentarEnMs } = {}) {
+    super(mensaje);
+    this.name = 'ErrorIA';
+    this.codigo = codigo;
+    this.estado = estado;
+    this.reintentarEnMs = reintentarEnMs;
+  }
+}
+const codigoDeEstado = (estado) => (estado === 429 ? 'cuota' : estado >= 500 ? 'saturado' : [401, 403].includes(estado) ? 'clave' : 'otro');
+
+// Enfriamiento por límite de cuota (429): mientras dura, NO se llama a la API (cada llamada fallida
+// gasta cuota y tiempo). Se respeta Retry-After / retryDelay y, si no vienen, ENFRIAMIENTO_429_S (60 s).
+const enfriamientos = new Map();
+export const reiniciarEnfriamientos = () => enfriamientos.clear();
+export const enfriamientoRestante = (clave) => Math.max(0, (enfriamientos.get(clave) ?? 0) - Date.now());
+export const estadoEnfriamiento = () => Math.max(0, ...[...enfriamientos.values()].map((hasta) => hasta - Date.now()));
+const MAX_ENFRIAMIENTO_MS = 15 * 60_000;
+
+async function esperaDe429(res) {
+  const crudo = res.headers?.get?.('retry-after');
+  const cabecera = crudo === null || crudo === undefined || crudo === '' ? NaN : Number(crudo);
+  if (Number.isFinite(cabecera) && cabecera >= 0) return cabecera * 1000;
+  try {
+    const cuerpo = await res.clone().text();
+    const m = cuerpo.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
+    if (m) return Number(m[1]) * 1000;
+  } catch { /* sin detalle: se usa el valor por defecto */ }
+  return null;
+}
+
+// Mensaje para la persona según el tipo de fallo de la IA (sin detalles técnicos ni claves)
+export function mensajeErrorIA(error, { sufijo = 'Mientras tanto puedes usar comandos, por ejemplo:\n/gasto 20000 comida almuerzo' } = {}) {
+  const minutos = Math.max(1, Math.ceil((error?.reintentarEnMs ?? 60_000) / 60_000));
+  switch (error?.codigo) {
+    case 'cuota': return `⏳ La IA llegó a su límite de uso por ahora (se libera en ~${minutos} min). ${sufijo}`;
+    case 'saturado': return `😕 El servicio de IA está saturado en este momento. Intenta de nuevo en un rato. ${sufijo}`;
+    case 'tiempo': return `😕 La IA no respondió a tiempo. Intenta de nuevo en un momento. ${sufijo}`;
+    case 'clave': return `⚠️ La IA no está bien configurada en el servidor (el administrador debe revisar la clave). ${sufijo}`;
+    default: return `😕 La IA no respondió ahora mismo. Intenta de nuevo en un momento. ${sufijo}`;
+  }
+}
+
+// Hace la petición con hasta `intentos` intentos.
+//  • 503/5xx, tiempo agotado y fallos de red: se reintenta (con pausa creciente).
+//  • 429 (cuota): NO se reintenta salvo que el servidor pida esperar muy poco (≤ ESPERA_429_MAX_MS, 5 s);
+//    si no, se activa un enfriamiento para esa `clave` y se devuelve la respuesta.
 // Devuelve la última respuesta, o lanza el último error si nunca hubo respuesta.
-async function solicitarConReintento(url, opciones, { intentos = 2 } = {}) {
+async function solicitarConReintento(url, opciones, { intentos = 2, clave = url } = {}) {
+  const restante = enfriamientoRestante(clave);
+  if (restante > 0) {
+    throw new ErrorIA(`API 429: límite de cuota; la IA queda en espera ${Math.ceil(restante / 1000)} s`, { codigo: 'cuota', estado: 429, reintentarEnMs: restante });
+  }
   for (let intento = 1; ; intento++) {
     let res;
     try {
       res = await fetch(url, { ...opciones, signal: AbortSignal.timeout(tiempoIntento()) });
     } catch (e) {
-      const error = ['TimeoutError', 'AbortError'].includes(e?.name) ? new Error('La IA no respondió a tiempo') : e;
+      const tiempo = ['TimeoutError', 'AbortError'].includes(e?.name);
+      const error = tiempo ? new ErrorIA('La IA no respondió a tiempo', { codigo: 'tiempo' }) : e;
       if (intento >= intentos) throw error;
       await pausa(numeroEnv('ESPERA_REINTENTO_MS', 1500) * intento);
       continue;
+    }
+    if (res.status === 429) {
+      const espera = await esperaDe429(res);
+      if (espera !== null && espera <= numeroEnv('ESPERA_429_MAX_MS', 5000) && intento < intentos) {
+        await res.body?.cancel().catch(() => {});
+        await pausa(espera);
+        continue;
+      }
+      const duracion = Math.min(espera ?? numeroEnv('ENFRIAMIENTO_429_S', 60) * 1000, MAX_ENFRIAMIENTO_MS);
+      enfriamientos.set(clave, Date.now() + duracion);
+      return res;
     }
     if (!esTemporal(res.status) || intento >= intentos) return res;
     await res.body?.cancel().catch(() => {});
@@ -277,8 +341,8 @@ async function solicitarConReintento(url, opciones, { intentos = 2 } = {}) {
 }
 
 async function leerError(res) {
-  const detalle = await res.text().catch(() => '');
-  return new Error(`API ${res.status}: ${detalle.slice(0, 200)}`);
+  const detalle = redactar(await res.text().catch(() => ''));
+  return new ErrorIA(`API ${res.status}: ${detalle.slice(0, 200)}`, { codigo: codigoDeEstado(res.status), estado: res.status, reintentarEnMs: res.status === 429 ? estadoEnfriamiento() : undefined });
 }
 
 // Modelos de Gemini en orden de preferencia: el principal y, después, el de respaldo.
@@ -315,7 +379,7 @@ export async function pedirAGemini(cuerpo) {
           headers: { 'content-type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
           body: JSON.stringify(cuerpo),
         },
-        { intentos: posicion === 0 ? 2 : 1 },
+        { intentos: posicion === 0 ? 2 : 1, clave: `gemini:${modelo ?? 'fijo'}` },
       );
     } catch (error) {
       ultimoError = error;

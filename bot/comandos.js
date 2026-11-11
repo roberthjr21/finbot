@@ -82,6 +82,7 @@ export const AYUDA = [
   '🔁 *Recurrentes*: /recurrente gasto 30000 servicios mensual Netflix · /recurrentes · /pausar N · /reactivar N',
   '🎯 *Metas de ahorro*: /meta Viaje 3000000 · /metas · /aportar Viaje 50000',
   '🔔 *Alertas*: /alertas (ver y configurar)',
+  '🩺 /diagnostico: estado de la IA, voz/fotos, tu uso de hoy y el modo (normal o prueba).',
   '🎙️ Si te equivocas en lo último, dime: "mejor ponlo en transporte" o "era de 30 mil".',
   '🎙️ También puedes mandarme una *nota de voz* o una *foto de un recibo* (te pido confirmar antes de guardar).',
 ].join('\n');
