@@ -18,6 +18,7 @@ export async function escribirBot(ruta: string, cuerpo: unknown): Promise<Result
       headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json', 'X-Sesion': sesion },
       body: JSON.stringify(cuerpo),
       cache: 'no-store',
+      redirect: 'error',
       signal: AbortSignal.timeout(8000),
     })
     const json = (await respuesta.json().catch(() => null)) as { ok?: unknown; error?: unknown; duplicado?: unknown } | null

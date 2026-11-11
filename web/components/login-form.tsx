@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 
 type Paso = 'telefono' | 'codigo'
 
@@ -12,6 +12,7 @@ export function LoginForm({ expirada }: Readonly<{ expirada?: boolean }>) {
   const [codigo, setCodigo] = useState('')
   const [mensaje, setMensaje] = useState<string | null>(expirada ? 'Tu sesión venció. Entra de nuevo.' : null)
   const [cargando, setCargando] = useState(false)
+  const enCurso = useRef(false)
 
   async function enviar(ruta: string, cuerpo: Record<string, string>) {
     setCargando(true)
@@ -20,16 +21,20 @@ export function LoginForm({ expirada }: Readonly<{ expirada?: boolean }>) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cuerpo),
+        signal: AbortSignal.timeout(12000),
       })
     } catch {
       return null
     } finally {
       setCargando(false)
+      enCurso.current = false
     }
   }
 
   async function pedirCodigo(evento: FormEvent) {
     evento.preventDefault()
+    if (enCurso.current) return
+    enCurso.current = true
     setMensaje(null)
     const r = await enviar('/api/auth/solicitar', { telefono })
     if (!r) return setMensaje('No se pudo conectar. Inténtalo de nuevo.')
@@ -43,6 +48,8 @@ export function LoginForm({ expirada }: Readonly<{ expirada?: boolean }>) {
 
   async function entrar(evento: FormEvent) {
     evento.preventDefault()
+    if (enCurso.current) return
+    enCurso.current = true
     setMensaje(null)
     const r = await enviar('/api/auth/verificar', { telefono, codigo })
     if (r?.ok) {

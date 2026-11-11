@@ -36,7 +36,7 @@ export function DashboardShell({
   return (
     <div className="app-shell">
       {/* Menú móvil sin JavaScript: la casilla abre y cierra la barra lateral */}
-      <input id="menu-movil" className="menu-toggle" type="checkbox" aria-hidden="true" tabIndex={-1} />
+      <input id="menu-movil" className="menu-toggle" type="checkbox" aria-label="Abrir o cerrar el menú de navegación" />
       <label htmlFor="menu-movil" className="menu-scrim" aria-hidden="true" />
       <aside className="sidebar">
         <div className="brand-row">

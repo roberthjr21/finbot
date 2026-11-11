@@ -27,6 +27,9 @@ export function proxy(request: NextRequest) {
   respuesta.headers.set('X-Frame-Options', 'DENY')
   respuesta.headers.set('X-Content-Type-Options', 'nosniff')
   respuesta.headers.set('Referrer-Policy', 'same-origin')
+  respuesta.headers.set('Content-Security-Policy', "frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'")
+  respuesta.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  if (process.env.NODE_ENV === 'production') respuesta.headers.set('Strict-Transport-Security', 'max-age=31536000')
   return respuesta
 }
 

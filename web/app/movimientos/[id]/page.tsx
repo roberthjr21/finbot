@@ -1,3 +1,4 @@
+import { FormularioEnvio } from '@/components/formulario-envio'
 import Link from 'next/link'
 import { DashboardShell, EstadoConexion } from '@/components/dashboard-shell'
 import { Aviso, FormularioMovimiento } from '@/components/formulario-movimiento'
@@ -35,13 +36,13 @@ export default async function EditarMovimientoPage({
                 hoy={hoy}
                 etiquetaBoton="Guardar cambios"
               />}
-          <form className="form-card panel danger-zone" method="post" action="/api/movimientos/eliminar">
+          <FormularioEnvio className="form-card panel danger-zone" action="/api/movimientos/eliminar">
             <input type="hidden" name="id" value={movimiento.datos.id} />
             <h2>Borrar movimiento</h2>
             <p className="subheading">Esto cambia tu saldo y no se puede deshacer desde la web.</p>
             <label className="check"><input type="checkbox" name="confirmar" value="si" required /> Sí, quiero borrar este movimiento</label>
             <div className="form-actions"><button className="btn-danger" type="submit">Borrar</button></div>
-          </form>
+          </FormularioEnvio>
         </>
       )}
     </DashboardShell>

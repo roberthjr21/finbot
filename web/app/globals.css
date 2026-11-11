@@ -1,6 +1,6 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
-@import 'shadcn/tailwind.css';
+@import '../styles/shadcn.css';
 
 /* ===== FinBot · sistema visual =====
    Colores en variables: el modo oscuro solo redefine las variables. */
@@ -285,3 +285,6 @@ a { color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
 }
+
+.menu-toggle:focus-visible ~ .main-content .menu-button { outline: 3px solid var(--info); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
