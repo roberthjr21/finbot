@@ -1,3 +1,5 @@
+import { completarMedia } from './respuesta-media.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 import makeWASocket, {
   useMultiFileAuthState,
@@ -22,7 +24,10 @@ import { temaDeGuia } from './consejos.js';
 import { tieneDecimalConPunto } from './montos.js';
 import { entero } from './limites.js';
 import { crearLimitadorPersistente as crearLimitador } from './limites-sqlite.js';
-import { acumularMedia } from './recursos.js';
+import { acumularMedia, enviarConTiempo } from './recursos.js';
+import * as trabajos from './trabajos.js';
+import * as outbox from './outbox.js';
+import { codificarMensaje, decodificarMensaje, esSaludoInicial } from './codec-mensajes.js';
 import * as acceso from './acceso.js';
 import { programarRespaldos } from './respaldos.js';
 import * as contexto from './contexto.js';
@@ -75,21 +80,31 @@ let remitentesNoAutorizados = 0;
 // COLA DE MENSAJES
 // ==========================================
 
-let cola = Promise.resolve();
-let pendientes = 0;
+// Los cuerpos aceptados viven en SQLite hasta terminar o agotar su plazo.
+const identidadMensaje = new AsyncLocalStorage();
+let conectado = false;
+let trabajadorEntrada;
+let trabajadorSalida;
 
-function encolar(tarea) {
-  if (cerrando || pendientes >= 200) {
-    console.warn('Cola de mensajes llena o en cierre; mensaje no procesado.');
-    return cola;
+function guardarRespuesta(usuario, jid, texto, citado, sufijo = '') {
+  return outbox.encolar({ clave: `respuesta:${usuario}:${citado?.key?.id ?? 'aviso'}${sufijo}`, usuario, texto, jid });
+}
+async function recibirPersistente(usuario, jid, msg) {
+  if (db.yaProcesadoDe(usuario, msg.key.id)) return;
+  let r;
+  try {
+    const contenido = codificarMensaje(msg);
+    r = trabajos.admitir({ clave: `entrada:${usuario}:${msg.key.id}`, usuario, tipo: 'entrada', contenido });
   }
-  pendientes++;
-  cola = cola
-    .then(tarea)
-    .catch((e) => console.error('Error en la cola:', e.message))
-    .finally(() => { pendientes--; });
-
-  return cola;
+  catch { r = { ok: false }; }
+  if (!r.ok) {
+    console.error('Mensaje no admitido: cola saturada o almacenamiento no disponible');
+    // Fuera de la cola llena: aviso explícito, sin marcar el mensaje como procesado.
+    try { await enviarAUsuario(usuario, '⏳ No pude guardar tu mensaje porque estoy saturado. Revisa /ultimos y vuelve a enviarlo en unos minutos.'); }
+    catch { console.error('Tampoco se pudo entregar el aviso de saturación'); }
+    return;
+  }
+  trabajadorEntrada?.despertar();
 }
 
 // ==========================================
@@ -167,21 +182,10 @@ function registrarEnviado(resultado) {
   }
 }
 
-async function enviarTexto(sock, jid, texto, citado) {
-  try {
-    const resultado = await sock.sendMessage(
-      jid,
-      { text: MARCA + texto },
-      citado ? { quoted: citado } : undefined
-    );
-
-    registrarEnviado(resultado);
-  } catch (e) {
-    console.error(
-      'No se pudo enviar la respuesta:',
-      e.message
-    );
-  }
+async function enviarTexto(sock, jid, texto, citado, sufijo = '') {
+  const usuario = identidadMensaje.getStore() ?? await identificarRemitente(sock, citado, {}) ?? soloNumero(jid);
+  guardarRespuesta(usuario, jid, texto, citado, sufijo);
+  trabajadorSalida?.despertar();
 }
 
 // ==========================================
@@ -207,8 +211,7 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
     if (db.yaProcesadoDe(usuario, msg.key.id)) return;
   } catch (error) {
     console.error('No se pudo consultar el estado del mensaje:', error.message);
-    await enviarTexto(sock, jid, '⚠️ La base de datos no está disponible. No repetí ni registré el movimiento.', msg);
-    return;
+    throw error;
   }
 
   // Límite diario por persona (mensajes e IA), para que nadie agote la cuota de todos
@@ -346,6 +349,7 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
         respuestas.push('⚠️ Procesé solo las primeras 5 acciones de este mensaje.');
       }
       db.marcarProcesado(id);
+      if (respuestas.length) guardarRespuesta(usuario, jid, (db.pruebaActiva(usuario) ? '🧪 MODO PRUEBA · Datos temporales.\n\n' : '') + respuestas.join('\n\n'), msg);
       return true;
     });
     if (!procesado) return;
@@ -353,8 +357,7 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
     completado = true;
   } catch (error) {
     console.error('No se pudo completar el mensaje de forma atómica:', error.message);
-    respuestas.length = 0;
-    respuestas.push('⚠️ No pude completar este mensaje; no guardé cambios parciales. Puedes volver a intentarlo.');
+    throw error;
   }
 
   // El análisis de gastos solo lee datos y llama a la IA, así que va fuera de la transacción.
@@ -380,7 +383,8 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
     sock,
     jid,
     (db.pruebaActiva(usuario) ? '🧪 MODO PRUEBA · Datos temporales, no aparecen en la web.\n\n' : '') + respuestas.join('\n\n'),
-    msg
+    msg,
+    acotadas.some(a => a?.nombre === 'analizar_gastos') ? ':analisis' : ''
   );
 }
 
@@ -403,8 +407,8 @@ async function atenderAudio(sock, jid, msg, usuario) {
     : db.usoDelDia(usuario, fechaBogota()).ia >= MAX_IA_DIA ? '⏳ Llegaste al límite diario de mensajes con IA. Escríbeme con comandos, por ejemplo: /gasto 20000 comida almuerzo'
     : null;
   if (motivo) {
-    db.marcarProcesado(`${usuario}:${msg.key.id}`);
-    await enviarTexto(sock, jid, motivo, msg);
+    completarMedia({ usuario, jid, mensajeId: msg.key.id, texto: motivo });
+    trabajadorSalida?.despertar();
     return;
   }
   let transcripcion = '';
@@ -413,13 +417,13 @@ async function atenderAudio(sock, jid, msg, usuario) {
     transcripcion = await media.transcribirAudio({ buffer: await descargar(sock, msg), mimetype: nota.mimetype });
   } catch (error) {
     console.error('No se pudo transcribir la nota de voz:', error.message);
-    db.marcarProcesado(`${usuario}:${msg.key.id}`);
-    await enviarTexto(sock, jid, '🎙️ No pude procesar ese audio ahora mismo. Intenta de nuevo o escríbeme el gasto.', msg);
+    completarMedia({ usuario, jid, mensajeId: msg.key.id, texto: '🎙️ No pude procesar ese audio ahora mismo. Intenta de nuevo o escríbeme el gasto.' });
+    trabajadorSalida?.despertar();
     return;
   }
   if (!transcripcion) {
-    db.marcarProcesado(`${usuario}:${msg.key.id}`);
-    await enviarTexto(sock, jid, '🎙️ No logré entender el audio. Intenta de nuevo hablando más cerca, o escríbeme el gasto.', msg);
+    completarMedia({ usuario, jid, mensajeId: msg.key.id, texto: '🎙️ No logré entender el audio. Intenta de nuevo hablando más cerca, o escríbeme el gasto.' });
+    trabajadorSalida?.despertar();
     return;
   }
   await atender(sock, jid, msg, usuario, transcripcion, { origen: 'voz', transcripcion });
@@ -433,9 +437,9 @@ async function atenderImagen(sock, jid, msg, usuario) {
 async function atenderImagenEnBase(sock, jid, msg, usuario) {
   if (db.yaProcesadoDe(usuario, msg.key.id)) return;
   const foto = contenidoDe(msg)?.imageMessage ?? {};
-  const cerrar = async (texto) => {
-    db.marcarProcesado(`${usuario}:${msg.key.id}`);
-    await enviarTexto(sock, jid, texto, msg);
+  const cerrar = async (texto, cambios) => {
+    completarMedia({ usuario, jid, mensajeId: msg.key.id, texto, cambios });
+    trabajadorSalida?.despertar();
   };
   if (!media.hayMedia()) return cerrar('🧾 Para leer recibos necesito GEMINI_API_KEY configurada y MEDIA_ACTIVA distinta de 0. También puedes escribirme el gasto.');
   if (Number(foto.fileLength ?? 0) > media.maxBytes()) return cerrar('🧾 Esa imagen pesa demasiado. Mándala con menos calidad.');
@@ -450,13 +454,9 @@ async function atenderImagenEnBase(sock, jid, msg, usuario) {
     const recarga=media.contextoRecarga(datosLeidos,hoy);
     const lectura=media.validarRecibo(datosLeidos,hoy);
     if (!lectura.ok) {
-      if (recarga) contexto.guardar(usuario,{recarga,pendiente:null});
-      return cerrar(recarga ? media.textoInicioRecarga(recarga) : `🧾 ${lectura.error}`);
+      return cerrar(recarga ? media.textoInicioRecarga(recarga) : `🧾 ${lectura.error}`, recarga ? {recarga,pendiente:null} : undefined);
     }
-    contexto.guardar(usuario,{recarga:null});
-    db.marcarProcesado(`${usuario}:${msg.key.id}`);
-    contexto.guardar(usuario, { pendiente: { origen: 'imagen', items: [{ ...lectura.item, tipo: 'gasto' }], hash } });
-    await enviarTexto(sock, jid, media.textoConfirmacionRecibo(lectura, media.posibleDuplicado(usuario, lectura.item)), msg);
+    return cerrar(media.textoConfirmacionRecibo(lectura, media.posibleDuplicado(usuario, lectura.item)), { recarga: null, pendiente: { origen: 'imagen', items: [{ ...lectura.item, tipo: 'gasto' }], hash } });
   } catch (error) {
     console.error('No se pudo leer la imagen:', error.message);
     await cerrar('🧾 No pude leer esa imagen ahora mismo. Intenta de nuevo o escríbeme el gasto.');
@@ -523,6 +523,7 @@ function reconectar(motivo) {
 // ==========================================
 
 async function iniciar() {
+  if (cerrando) return;
   const { state, saveCreds } =
     await useMultiFileAuthState('auth');
 
@@ -549,10 +550,14 @@ async function iniciar() {
       }
 
       if (connection === 'open') {
+        conectado = true;
+        trabajadorEntrada?.despertar();
+        trabajadorSalida?.despertar();
         console.log('✅ Bot financiero conectado.');
       }
 
       if (connection === 'close') {
+        conectado = false;
         const codigo =
           lastDisconnect?.error?.output?.statusCode;
 
@@ -675,9 +680,10 @@ async function iniciar() {
         if (cuenta.estado !== 'activo') continue;
 
         if (esNueva) {
-          encolar(() => enviarTexto(sock, jid, BIENVENIDA, msg));
-          // Un saludo suelto no se procesa; un mensaje con cifras o un comando, sí
-          if (!/\d|^\//.test(texto)) continue;
+          guardarRespuesta(usuario, jid, BIENVENIDA, msg, ':bienvenida');
+          trabajadorSalida?.despertar();
+          // Solo un saludo se omite: el primer audio, foto o monto escrito en palabras también se procesa.
+          if (esSaludoInicial(texto)) continue;
         }
 
         if (DEBUG) {
@@ -700,7 +706,8 @@ async function iniciar() {
           if (!avisadosPorExceso.has(usuario)) {
             avisadosPorExceso.add(usuario);
             setTimeout(() => avisadosPorExceso.delete(usuario), 60 * 1000).unref();
-            encolar(() => enviarTexto(sock, jid, '⏳ Vas muy rápido. Espera un minuto y vuelve a escribirme.', msg));
+            guardarRespuesta(usuario, jid, '⏳ Vas muy rápido. Este mensaje no se procesó; espera un minuto y vuelve a enviarlo.', msg, ':limite');
+            trabajadorSalida?.despertar();
           }
           continue;
         }
@@ -710,17 +717,13 @@ async function iniciar() {
           if (DEBUG) console.log(`[debug] Mensaje sin texto recibido: ${tipo}`);
 
           if (TIPOS_MEDIA.has(tipo)) {
-            encolar(() =>
-              responderSinTexto(sock, jid, msg, usuario)
-            );
+            await recibirPersistente(usuario, jid, msg);
           }
 
           continue;
         }
 
-        encolar(() =>
-          atender(sock, jid, msg, usuario, texto)
-        );
+        await recibirPersistente(usuario, jid, msg);
       }
     }
   );
@@ -769,10 +772,31 @@ if (hayIA()) {
 
 // Envía un mensaje a una cuenta registrada con la MISMA sesión de WhatsApp del bot.
 // Solo lo usa la API interna para los códigos de acceso a la web.
-async function enviarAUsuario(telefono, texto) {
-  if (!socketActivo) throw new Error('WhatsApp no está conectado');
-  registrarEnviado(await socketActivo.sendMessage(`${telefono}@s.whatsapp.net`, { text: MARCA + texto }));
+async function enviarAUsuario(telefono, texto, opciones = {}) {
+  if (!socketActivo || !conectado) { const e = new Error('WhatsApp no está conectado'); e.posponerMs = 60000; throw e; }
+  if (BLOQUEADOS.includes(telefono)) { const e = new Error('Destinatario bloqueado'); e.posponerMs = 3600000; throw e; }
+  registrarEnviado(await enviarConTiempo(() => socketActivo.sendMessage(opciones.jid ?? `${telefono}@s.whatsapp.net`, { text: MARCA + texto }, opciones.messageId ? { messageId: opciones.messageId } : undefined), opciones.messageId ? 20000 : 6000));
 }
+trabajadorEntrada = trabajos.crearTrabajador({
+  tipo: 'entrada', mantenimiento: () => {
+    const pendientes = db.basePersistente().prepare("SELECT id, usuario FROM trabajos WHERE tipo = 'entrada' AND estado = 'agotado' AND avisado = 0 LIMIT 20").all();
+    for (const t of pendientes) {
+      outbox.encolar({ clave: `agotado:${t.id}`, usuario: t.usuario, texto: '⚠️ No pude completar un mensaje tras los reintentos. Revisa /ultimos antes de reenviarlo; no se guardan cambios financieros parciales.' });
+      db.basePersistente().prepare('UPDATE trabajos SET avisado = 1 WHERE id = ?').run(t.id);
+    }
+  }, concurrencia: entero('COLA_CONCURRENCIA', 4), habilitado: () => conectado && !cerrando,
+  procesar: async (tarea) => {
+    if (!admitido(tarea.usuario) || db.usuarioPorTelefono(tarea.usuario)?.estado !== 'activo') return;
+    const msg = decodificarMensaje(trabajos.leerContenido(tarea.contenido, tarea));
+    if (!esChatIndividual(msg.key.remoteJid)) throw new Error('Chat no permitido');
+    const texto = textoDe(msg).trim();
+    await identidadMensaje.run(tarea.usuario, async () => {
+      if (texto) await atender(socketActivo, msg.key.remoteJid, msg, tarea.usuario, texto);
+      else await responderSinTexto(socketActivo, msg.key.remoteJid, msg, tarea.usuario);
+    });
+  },
+});
+trabajadorSalida = trabajos.crearTrabajador({ tipo: 'salida', habilitado: () => conectado && !cerrando, procesar: tarea => outbox.entregar(tarea, enviarAUsuario) });
 
 const servidorApi = iniciarApi({ enviar: enviarAUsuario });
 // Recordatorios, recurrentes y alertas (ver programador.js)
@@ -782,7 +806,9 @@ async function apagar(signal) {
   if (cerrando) return;
   cerrando = true;
   console.log(`Cierre solicitado (${signal}); guardando y cerrando SQLite.`);
-  detenerProgramador();
+  await detenerProgramador();
+  await trabajadorEntrada.detener();
+  await trabajadorSalida.detener();
   try { socketActivo?.end(new Error('Cierre solicitado')); } catch {}
   // Eventos que ya estaban resolviendo la identidad pueden encolar trabajo
   // después de que el socket se cierre.
@@ -790,7 +816,7 @@ async function apagar(signal) {
     await new Promise((resolve) => setImmediate(resolve));
   }
   // Deja que termine el trabajo ya encolado antes de cerrar la conexión SQLite.
-  await cola;
+  // Lo pendiente permanece en SQLite para el próximo arranque.
   if (servidorApi?.listening) {
     await new Promise((resolve) => servidorApi.close(resolve));
   }

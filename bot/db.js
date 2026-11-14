@@ -7,6 +7,11 @@ import { migrar } from './migraciones.js';
 const archivoDB = process.env.DB_ARCHIVO ?? 'finanzas.db';
 const dbReal = new DatabaseSync(archivoDB);
 const baseTemporal = new AsyncLocalStorage();
+const controlTransaccion = new AsyncLocalStorage();
+export const conControlTransaccion = (control, tarea) => controlTransaccion.run(control, tarea);
+// Cola y outbox siempre usan la conexión real, incluso en /prueba.
+export const basePersistente = () => dbReal;
+export const enTransaccionPersistente = (tarea) => baseTemporal.run(undefined, () => enTransaccion(tarea));
 // Las consultas de un mensaje de prueba van a su propia base SQLite en memoria.
 // La web, el programador y los demás usuarios siempre ven la base real.
 const db = new Proxy(dbReal, {
@@ -198,6 +203,7 @@ export function enTransaccion(tarea) {
   const nombre = anidada ? `finbot_anidada_${++siguienteSavepoint}` : null;
   db.exec(anidada ? `SAVEPOINT ${nombre}` : 'BEGIN IMMEDIATE');
   try {
+    controlTransaccion.getStore()?.();
     const resultado = tarea();
     if (resultado && typeof resultado.then === 'function') throw new Error('Una transacción SQLite debe ser síncrona');
     db.exec(anidada ? `RELEASE SAVEPOINT ${nombre}` : 'COMMIT');
@@ -298,9 +304,16 @@ export function obtenerMovimiento(usuario, id) {
   ).get(usuario, id) ?? null;
 }
 
+// Nuevas auditorías conservan cifras y trazabilidad, sin duplicar nombres o texto libre.
+function minimizarAuditoria(valor) {
+  if (!valor || typeof valor !== 'object') return valor;
+  const permitidas = new Set(['id', 'tipo', 'monto', 'categoria', 'fecha', 'antes', 'despues', 'indice', 'recurrente']);
+  return Object.fromEntries(Object.entries(valor).filter(([k]) => permitidas.has(k)).map(([k,v]) => [k, minimizarAuditoria(v)]));
+}
+
 export function registrarAuditoria({ usuario, accion, entidad, entidadId = null, origen = 'bot', detalle = null }) {
   db.prepare('INSERT INTO auditoria (usuario, accion, entidad, entidad_id, origen, detalle) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(usuario, accion, entidad, entidadId, origen, detalle ? JSON.stringify(detalle).slice(0, 2000) : null);
+    .run(usuario, accion, entidad, entidadId, origen, detalle ? JSON.stringify(minimizarAuditoria(detalle)).slice(0, 2000) : null);
 }
 
 export function listarAuditoria(usuario, limite = 50) {
@@ -609,6 +622,7 @@ export function contarBorrado(usuario, alcance) {
       ? cuenta('SELECT COUNT(*) AS n FROM alertas_config WHERE usuario = ?', usuario)
         + cuenta('SELECT COUNT(*) AS n FROM alertas_enviadas WHERE usuario = ?', usuario)
       : 0,
+    notificaciones: alcance === 'todo' ? cuenta("SELECT COUNT(*) AS n FROM trabajos WHERE usuario = ? AND tipo = 'salida' AND estado IN ('pendiente','procesando')", usuario) : 0,
     contexto: alcance === 'todo' ? cuenta('SELECT COUNT(*) AS n FROM contexto WHERE usuario = ?', usuario) : 0,
   };
 }
@@ -643,6 +657,8 @@ function borrarDatosAtomico(usuario, alcance) {
 
 // "Borrar todo" también limpia lo de la fase 2 (recordatorios, recurrentes, metas, alertas y contexto) de esa persona
 function borrarDatosFase2(usuario) {
+  db.prepare("UPDATE trabajos SET estado = 'cancelado', contenido = NULL, dueno = NULL, lease_hasta = 0 WHERE usuario = ? AND tipo = 'salida' AND estado IN ('pendiente','procesando')").run(usuario);
+  db.prepare('DELETE FROM alertas_reservadas WHERE usuario = ?').run(usuario);
   db.prepare('DELETE FROM recurrentes_ejecuciones WHERE recurrente_id IN (SELECT id FROM recurrentes WHERE usuario = ?)').run(usuario);
   db.prepare('DELETE FROM metas_aportes WHERE usuario = ?').run(usuario);
   for (const tabla of ['recordatorios', 'recurrentes', 'metas', 'alertas_config', 'alertas_enviadas', 'contexto']) {

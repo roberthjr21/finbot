@@ -42,3 +42,20 @@ test('lectores rechazan null, arrays, tipo incorrecto y cuerpo grande sin Conten
   const form = await leerFormularioSeguro(new Request('http://localhost', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'monto=100&tipo=gasto' }))
   assert.equal(form.get('monto'), '100')
 })
+
+test('Vercel: dominio configurado, preview propia y rechazos de HTTP/configuración ambigua', () => {
+  const custom = { VERCEL: '1', NODE_ENV: 'production', VERCEL_URL: 'preview.vercel.app', WEB_ORIGEN: 'https://finanzas.example' }
+  assert.equal(comprobarOrigen(req({ origin: 'https://finanzas.example' }), custom), true)
+  assert.equal(comprobarOrigen(req({ origin: 'https://evil.vercel.app' }), custom), false)
+  assert.equal(comprobarOrigen(req({ origin: 'https://preview.vercel.app' }), { VERCEL: '1', NODE_ENV: 'production', VERCEL_URL: 'preview.vercel.app' }), true)
+  assert.equal(comprobarOrigen(req({ origin: 'http://finanzas.example' }), { NODE_ENV: 'production', WEB_ORIGEN: 'http://finanzas.example' }), false)
+  for (const WEB_ORIGEN of ['http://finanzas.example', 'https://user:pass@finanzas.example', 'https://finanzas.example/ruta', 'https://finanzas.example?x=1']) {
+    assert.equal(comprobarOrigen(req({ origin: 'https://finanzas.example' }), { NODE_ENV: 'production', WEB_ORIGEN }), false)
+  }
+})
+
+test('analítica omite errores en queries, fragmentos e identificadores de movimientos', async () => {
+  const { urlAnalitica } = await import('./lib/analitica.ts')
+  assert.equal(urlAnalitica('https://finbot.example/movimientos/123?e=dato-privado#seccion'), 'https://finbot.example/movimientos/detalle')
+  assert.equal(urlAnalitica('https://finbot.example/movimientos?tipo=gasto'), 'https://finbot.example/movimientos')
+})

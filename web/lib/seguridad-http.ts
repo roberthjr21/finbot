@@ -34,7 +34,9 @@ export function comprobarOrigen(request: Request, env: Entorno = process.env) {
     const esperado = env.WEB_ORIGEN || (env.VERCEL === '1' && env.VERCEL_URL ? `https://${env.VERCEL_URL}` : '')
     const url = new URL(esperado || request.url)
     if (!esperado && env.NODE_ENV === 'production') return false
-    if (!['http:', 'https:'].includes(url.protocol)) return false
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || (esperado && url.pathname !== '/')) return false
+    const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+    if (env.NODE_ENV === 'production' && !local && url.protocol !== 'https:') return false
     return recibido === url.origin
   } catch { return false }
 }

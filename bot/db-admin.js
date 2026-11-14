@@ -2,10 +2,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
-function validarBase(archivo) {
+export function validarBase(archivo) {
   const db = new DatabaseSync(archivo, { readOnly: true });
   try {
     db.exec('PRAGMA busy_timeout = 5000');
@@ -66,12 +66,38 @@ function validarBase(archivo) {
   }
 }
 
+export function sumaArchivo(archivo) {
+  const h = createHash('sha256');
+  const fd = fs.openSync(archivo, 'r');
+  const buffer = Buffer.alloc(1024 * 1024);
+  try { let n; while ((n = fs.readSync(fd, buffer, 0, buffer.length, null))) h.update(buffer.subarray(0,n)); }
+  finally { fs.closeSync(fd); }
+  return h.digest('hex');
+}
+export function verificarRespaldo(archivo) {
+  validarBase(archivo);
+  const suma = sumaArchivo(archivo);
+  if (fs.existsSync(`${archivo}.sha256`) && fs.readFileSync(`${archivo}.sha256`, 'utf8').trim() !== suma) throw new Error('El respaldo no coincide con su checksum SHA-256');
+  return suma;
+}
+export function comprobarEspacio(origen, destino, { reservaBytes = 64 * 1024 * 1024, statfs = fs.statfsSync } = {}) {
+  let carpeta = path.dirname(path.resolve(destino));
+  while (!fs.existsSync(carpeta)) carpeta = path.dirname(carpeta);
+  const disco = statfs(carpeta, { bigint: true });
+  const libre = BigInt(disco.bavail) * BigInt(disco.bsize);
+  const bytesWal = fs.existsSync(`${origen}-wal`) ? fs.statSync(`${origen}-wal`).size : 0;
+  const necesarios = (BigInt(fs.statSync(origen).size) + BigInt(bytesWal)) * 3n + BigInt(reservaBytes);
+  if (libre < necesarios) throw new Error('Espacio insuficiente para crear y verificar la copia sin poner en riesgo la base');
+  return { libre: String(libre), necesarios: String(necesarios) };
+}
+
 export function crearRespaldo(origen, destino) {
   const src = path.resolve(origen);
   const dst = path.resolve(destino);
   if (src === dst) throw new Error('El origen y el destino deben ser distintos.');
   if (fs.existsSync(dst)) throw new Error('El archivo de destino ya existe; no se sobrescribió.');
-  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  comprobarEspacio(src, dst);
+  fs.mkdirSync(path.dirname(dst), { recursive: true, mode: 0o700 });
   validarBase(src);
   const temporal = path.join(path.dirname(dst), `.${path.basename(dst)}.backup-${randomUUID()}.db`);
   try {
@@ -89,6 +115,7 @@ export function crearRespaldo(origen, destino) {
     validarBase(temporal);
     // link es atómico y falla si alguien creó el destino durante el respaldo.
     fs.linkSync(temporal, dst);
+    fs.writeFileSync(`${dst}.sha256`, sumaArchivo(dst) + '\n', { flag: 'wx', mode: 0o600 });
   } finally {
     fs.rmSync(temporal, { force: true });
   }
@@ -106,8 +133,9 @@ export function restaurarRespaldo(origen, destino) {
   if (fs.existsSync(`${dst}-wal`) || fs.existsSync(`${dst}-shm`)) {
     throw new Error('El destino tiene archivos WAL/SHM huérfanos; elige otra ruta.');
   }
-  validarBase(src);
-  fs.mkdirSync(path.dirname(dst), { recursive: true });
+  verificarRespaldo(src);
+  comprobarEspacio(src, dst);
+  fs.mkdirSync(path.dirname(dst), { recursive: true, mode: 0o700 });
   const temporal = path.join(path.dirname(dst), `.${path.basename(dst)}.restore-${randomUUID()}.db`);
   try {
     fs.copyFileSync(src, temporal, fs.constants.COPYFILE_EXCL);

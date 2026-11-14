@@ -304,17 +304,19 @@ test('programador: envía recordatorios y alertas una sola vez, registra recurre
   db.agregarMovimiento({ usuario: u, tipo: 'gasto', monto: 2000, categoria: 'Comida', descripcion: '', fecha: HOY, mensajeId: 'prog1' });
   const ahora = new Date('2026-11-10T17:00:00Z'); // 12:00 Bogotá
   const enviados = [];
+  db.base().prepare('INSERT INTO privacidad_solicitudes(usuario,nonce_hash,huella,expira) VALUES(?,?,?,?)').run(u,'x','x',ahora.getTime()-1);
 
   // WhatsApp caído: no se marca nada
   _reiniciar();
   let r = await ciclo({ ahora, enviar: async () => { throw new Error('WhatsApp no está conectado'); } });
   assert.equal(r.recordatorios, 0);
+  assert.equal(db.base().prepare('SELECT 1 FROM privacidad_solicitudes WHERE usuario=?').get(u),undefined);
   assert.equal(rec.vencidos(ahora).filter((x) => x.usuario === u).length, 1, 'sigue pendiente');
   assert.equal(db.listarMovimientos({ usuario: u }).filter((m) => m.categoria === 'Servicios').length, 1, 'el recurrente sí se registra aunque el aviso falle');
 
   // WhatsApp de vuelta: se envía todo, una vez
   _reiniciar();
-  r = await ciclo({ ahora, enviar: async (usuario, texto) => { enviados.push([usuario, texto]); } });
+  r = await ciclo({ ahora: new Date(ahora.getTime() + 10_000), enviar: async (usuario, texto) => { enviados.push([usuario, texto]); } });
   assert.equal(r.recordatorios, 1);
   assert.ok(enviados.some(([x, t]) => x === u && /Recordatorio: Pagar tarjeta/.test(t)));
   assert.ok(enviados.some(([x, t]) => x === u && /presupuesto de Comida/.test(t)));

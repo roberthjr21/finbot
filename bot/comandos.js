@@ -77,6 +77,7 @@ export const AYUDA = [
   '/consejos si|no   (avisos para ahorrar o invertir)',
   '/debo 50000 Juan   /abono 20000 Juan   /deudas [persona]',
   '/borrar ingresos | gastos | deudas | presupuestos | todo   (pide confirmación)',
+  '/privacidad   (retención y eliminación de cuenta)',
   '',
   '⏰ *Recordatorios*: /recordar mañana pagar arriendo 800000 · /recordatorios · /listo N',
   '🔁 *Recurrentes*: /recurrente gasto 30000 servicios mensual Netflix · /recurrentes · /pausar N · /reactivar N',
@@ -171,6 +172,9 @@ export function interpretarComando(texto) {
 
     case 'ultimos':
       return { acciones: [{ nombre: 'ultimos_movimientos', datos: { cantidad: Number(resto[0]) || 5 } }] };
+
+    case 'privacidad':
+      return { respuesta: '🔒 /borrar todo elimina tus registros activos, pero conserva la cuenta, auditorías y respaldos. La eliminación definitiva requiere autorización expresa del titular y confirmación administrativa con el bot detenido. No borra los mensajes que conserva WhatsApp. Consulta la política de privacidad con el administrador.' };
 
     case 'deshacer':
       if (normalizar(resto[0] ?? '') === 'confirmar') {

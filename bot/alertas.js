@@ -1,4 +1,5 @@
 import * as db from './db.js';
+import { reconciliarReservas } from './trabajos.js';
 import * as finanzas from './finanzas.js';
 import * as metas from './metas.js';
 import * as recordatorios from './recordatorios.js';
@@ -162,23 +163,26 @@ export function calcular(usuario, hoy = fechaBogota()) {
   return TIPOS.filter((t) => cfg[t]).flatMap((t) => CALCULOS[t](usuario, hoy));
 }
 
-const yaEnviada = (usuario, clave) => Boolean(db.base().prepare('SELECT 1 FROM alertas_enviadas WHERE usuario = ? AND clave = ?').get(usuario, clave));
+const yaEnviada = (usuario, clave) => Boolean(db.base().prepare('SELECT 1 FROM alertas_enviadas WHERE usuario = ? AND clave = ? UNION ALL SELECT 1 FROM alertas_reservadas WHERE usuario = ? AND clave = ? LIMIT 1').get(usuario, clave, usuario, clave));
 
 // Lo que toca enviar ahora: sin repetidas, fuera del horario de silencio, respetando el máximo diario
 // y agrupado en UN solo mensaje. Devuelve {texto, claves} o null.
 export function pendientes(usuario, ahora = new Date()) {
+  reconciliarReservas();
   const hoy = fechaBogota(ahora);
   const hora = recordatorios.horaBogota(ahora);
   const cfg = configuracion(usuario);
   if (enSilencio(cfg, hora)) return null;
   const enviadasHoy = db.base().prepare('SELECT COUNT(*) AS n FROM alertas_enviadas WHERE usuario = ? AND dia = ?').get(usuario, hoy).n;
-  const cupo = cfg.max_diarias - enviadasHoy;
+  const reservadas = db.base().prepare("SELECT COUNT(*) AS n FROM alertas_reservadas r JOIN trabajos t ON t.id = r.trabajo_id WHERE r.usuario = ? AND r.dia = ? AND t.estado <> 'hecho'").get(usuario, hoy).n;
+  const cupo = cfg.max_diarias - enviadasHoy - reservadas;
   if (cupo <= 0) return null;
   const nuevas = calcular(usuario, hoy).filter((a) => !yaEnviada(usuario, a.clave)).slice(0, cupo);
   if (nuevas.length === 0) return null;
   return {
     texto: nuevas.length === 1 ? nuevas[0].texto : `🔔 Tienes ${nuevas.length} avisos:\n${nuevas.map((a) => `• ${a.texto}`).join('\n')}`,
     claves: nuevas.map((a) => a.clave),
+    avisos: nuevas,
   };
 }
 

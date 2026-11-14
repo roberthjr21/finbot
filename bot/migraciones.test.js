@@ -55,7 +55,7 @@ test('una migración nueva con datos existentes crea antes una copia verificada 
   } finally {
     abierta.close();
   }
-  const copias = fs.readdirSync(temporal).filter((f) => f.startsWith('vieja.db.antes-v99-'));
+  const copias = fs.readdirSync(temporal).filter((f) => f.startsWith('vieja.db.antes-v99-') && f.endsWith('.db'));
   assert.equal(copias.length, 1);
   const copia = new DatabaseSync(path.join(temporal, copias[0]), { readOnly: true });
   try {
@@ -84,7 +84,7 @@ test('si una migración falla, se revierte completa y la base queda igual', () =
 test('respaldos: se crean verificados, no se sobrescriben y se conservan solo las últimas N', () => {
   const carpeta = carpetaRespaldos(process.env.DB_ARCHIVO);
   const base = new Date('2026-11-10T10:00:00Z');
-  const hechos = [0, 1, 2, 3].map((i) => respaldarAhora(process.env.DB_ARCHIVO, { ahora: new Date(base.getTime() + i * 1000), conservar: 2 }));
+  const hechos = [0, 1, 2, 3].map((i) => respaldarAhora(process.env.DB_ARCHIVO, { ahora: new Date(base.getTime() + i * 1000), conservar: 2, confirmarRotacion: true }));
   assert.equal(hechos.length, 4);
   const quedan = listarRespaldos(carpeta);
   assert.equal(quedan.length, 2);
@@ -97,7 +97,7 @@ test('respaldos: se crean verificados, no se sobrescriben y se conservan solo la
     copia.close();
   }
   // El mismo instante no crea otra copia ni falla
-  assert.equal(respaldarAhora(process.env.DB_ARCHIVO, { ahora: new Date(base.getTime() + 3000), conservar: 2 }), hechos[3]);
+  assert.equal(respaldarAhora(process.env.DB_ARCHIVO, { ahora: new Date(base.getTime() + 3000), conservar: 2, confirmarRotacion: true }), hechos[3]);
   // La base original sigue intacta
   assert.ok(fs.existsSync(process.env.DB_ARCHIVO));
 });

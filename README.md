@@ -53,7 +53,7 @@ En una instalación local, la API utiliza por defecto `http://127.0.0.1:3001`. L
 ## Migraciones y respaldos
 
 - La base usa **migraciones versionadas** (`bot/migraciones.js`, tabla `schema_migraciones`). Solo se agregan cambios aditivos. Si hay una migración pendiente y la base tiene datos, antes se guarda una **copia verificada** (`finanzas.db.antes-vN-<fecha>.db`); si la copia falla, el bot no migra.
-- El bot hace **respaldos automáticos** al arrancar y cada `RESPALDO_CADA_HORAS` horas (por defecto 24), en `respaldos/` junto a la base. Se conservan los últimos `RESPALDO_CONSERVAR` (7). Cada copia se verifica antes de guardarse.
+- El bot hace **respaldos automáticos** al arrancar y cada `RESPALDO_CADA_HORAS` horas (por defecto 24), en `respaldos/` junto a la base. La rotación está desactivada por defecto; con autorización explícita `RESPALDO_ROTAR=1` conserva los últimos `RESPALDO_CONSERVAR` (7) de la misma familia. Cada copia se verifica antes de guardarse.
 - **Respaldo manual:** `node db-admin.js backup finanzas.db respaldos/manual.db`
 - **Restaurar** (con el bot detenido; nunca sobrescribe): `node db-admin.js restore respaldos/<copia>.db finanzas-restaurada.db`, revisa que todo esté bien y luego reemplaza `finanzas.db` por ese archivo.
 
@@ -188,4 +188,14 @@ pnpm test:integration
 pnpm audit
 ```
 
-La integración arranca dos servidores locales y requiere permiso para escuchar en loopback. No ejecuta el bot de WhatsApp ni despliega aplicaciones. El aviso moderado de minimatch en herramientas de desarrollo se registra en el informe; no se ocultan los resultados de audit.
+La integración arranca dos servidores locales y requiere permiso para escuchar en loopback. No ejecuta el bot de WhatsApp ni despliega aplicaciones. El aviso de minimatch de la primera etapa se mitiga mediante un override acotado y validado por compatibilidad; el informe de segunda etapa recoge la auditoría actual.
+
+## Segunda etapa de auditoría
+
+La revisión posterior al PR #30 incorpora privacidad explícita, eliminación de cuenta offline confirmada, cola/outbox SQLite, reintentos y recuperación, verificaciones de respaldos y cifrado local, además de pruebas de estrés y navegador. No elimina automáticamente auditorías históricas ni respaldos reales.
+
+Consulta [el informe actualizado](docs/AUDITORIA_FASE_2.md), [retención y privacidad](docs/PRIVACIDAD_Y_RETENCION.md), [operación y recuperación](docs/OPERACION_Y_RECUPERACION.md) y [preview/protección de main](docs/VERCEL_Y_PROTECCION_MAIN.md). Las reglas propuestas de main no se aplican sin aprobación.
+
+Las pruebas de navegador requieren `cd web`, `pnpm exec playwright install chromium`, `pnpm build` y `pnpm test:e2e`. Ejecutan Chromium contra API/SQLite de pruebas locales; WhatsApp, IA externa, Vercel y el túnel de producción requieren una validación operativa separada.
+
+`./iniciar.sh` es un lanzador exclusivo de desarrollo (ejecuta `pnpm dev` y rechaza `NODE_ENV=production`). Producción debe iniciar el bot y el panel compilado como servicios separados.

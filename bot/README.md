@@ -244,7 +244,7 @@ La restauración conserva el archivo original. Detén el bot antes de restaurar 
 - Mantén `API_HOST=127.0.0.1` detrás de un túnel o proxy HTTPS autenticado. La cabecera `X-Cliente-Ip` solo se acepta tras verificar el Bearer del servidor web; no es una credencial ni autoriza una cuenta. No se confía en otras cabeceras de IP entrantes.
 - Para rotar la clave de API, coloca temporalmente la anterior en `API_TOKEN_ANTERIOR`, cambia `API_TOKEN`, reinicia el bot, actualiza `BOT_API_TOKEN` en la web, comprueba salud y acceso, y retira la anterior. No mantengas claves comprometidas. Rotar `SECRETO_SESION` invalida códigos pendientes, pero las sesiones usan hashes independientes: revócalas explícitamente si existe un incidente.
 - Los límites sensibles usan SQLite y `BEGIN IMMEDIATE`; las verificaciones de códigos y creación de sesión son atómicas entre procesos. Los registros vencidos se purgan por lotes de 1000, con índices; los intentos rechazados no añaden filas.
-- La cola admite como máximo 200 trabajos pendientes. Con saturación se registra un aviso y los mensajes descartados no quedan marcados como procesados. Las descargas multimedia se cortan a los 15 segundos o al superar el tamaño configurado. Las respuestas de IA no pueden superar 512 KiB y sus errores no registran el contenido devuelto por el proveedor.
+- La cola persistente admite 5.000 trabajos por tipo y 500 por cuenta. Con saturación se intenta un aviso directo y el mensaje no queda marcado como procesado. Las descargas multimedia se cortan a los 15 segundos o al superar el tamaño configurado. Las respuestas de IA no pueden superar 512 KiB y sus errores no registran el contenido devuelto por el proveedor.
 - Audios: solo los movimientos validados pueden quedar pendientes; no ejecutan comandos ni abonos, préstamos o borrados automáticamente. Las otras operaciones se pueden escribir con los comandos habituales. Las confirmaciones destructivas siguen requiriendo texto explícito.
 - `/abono todo Persona` conserva el pago total; un abono sin monto pide aclaración. Borrar gastos se bloquea si hay cobros de préstamos: evita saldos negativos en la libreta. No se alteran automáticamente registros históricos para corregir inconsistencias existentes.
 
@@ -253,3 +253,21 @@ La restauración conserva el archivo original. Detén el bot antes de restaurar 
 Con el bot detenido, ejecuta `node db-admin.js restore respaldos/copia.db finanzas-restaurada.db`. Valida la copia y configura `DB_ARCHIVO` hacia la ruta restaurada; conserva la original. Reinicia solo una instancia de WhatsApp. Un respaldo contiene datos personales, hashes de sesión y límites de acceso: usa permisos de archivo 0600, directorio privado, cifrado del disco y una copia externa cifrada. Las copias locales verificadas no sustituyen esa copia externa. Nunca restaures sobre una base abierta.
 
 Si SQLite devuelve `SQLITE_BUSY`, comprueba procesos duplicados, disco y permisos; no borres los archivos WAL/SHM de una base en uso. Si una migración falla, conserva su respaldo y el log, detén el servicio y valida una copia antes de reintentar. Las migraciones nuevas son aditivas y se respaldan antes de aplicarse cuando existen datos financieros.
+
+## Segunda etapa: privacidad, cola y recuperación
+
+La migración v6 incorpora cola/outbox, revisiones de recordatorio y nuevas auditorías con menos datos personales; **no purga auditorías antiguas**. `/privacidad` explica la diferencia entre borrar registros y eliminar la cuenta. `/borrar todo` conserva cuenta, sesiones, auditoría y respaldos y lo advierte antes de confirmar. La eliminación definitiva solo se realiza con autorización del titular, plan de un solo uso y bot detenido mediante `privacidad-admin.js`. Nunca se ejecuta automáticamente sobre información real.
+
+Los mensajes admitidos sobreviven a reinicios y se procesan en orden por cuenta; por defecto pueden avanzar cuatro cuentas a la vez. Los trabajos aceptados y fallidos quedan diagnosticables, hay reintentos y avisos de saturación. La outbox conserva respuestas y avisos hasta enviarlos o agotar su política. WhatsApp puede duplicar o no entregar mensajes: se mantiene idempotencia financiera, sin prometer entrega externa exactamente una vez.
+
+Configura `COLA_SECRETO` (32+ caracteres, preferiblemente independiente); si falta se usa `SECRETO_SESION`. En producción la cola rechaza arrancar sin una clave válida. Conserva temporalmente `COLA_SECRETO_ANTERIOR` durante una rotación; no cambies claves sin revisar trabajos y copias pendientes. En desarrollo sin clave, usa únicamente datos ficticios en disco privado.
+
+Los respaldos nuevos incorporan checksum y comprobación de espacio, incluyendo WAL. Una copia existente se verifica antes de reutilizarla. La rotación ahora está desactivada por defecto: `RESPALDO_ROTAR=1` requiere autorización administrativa explícita y solo afecta a la misma familia de copias. Las copias heredadas/pre-migración permanecen sin borrar.
+
+Diagnóstico de solo lectura: `node estado.js /ruta/finanzas.db`. No carga credenciales, no migra ni imprime cuentas/cuerpos. El helper `respaldo-cifrado.js` permite preparar copias cifradas locales sin transferirlas a ningún servicio; recibe la frase por un canal stdin seguro.
+
+Documentación detallada:
+
+- [Retención y eliminación verificable](../docs/PRIVACIDAD_Y_RETENCION.md).
+- [Colas, avisos, respaldos y recuperación](../docs/OPERACION_Y_RECUPERACION.md).
+- [Informe de segunda etapa](../docs/AUDITORIA_FASE_2.md).

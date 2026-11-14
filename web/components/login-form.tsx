@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 
 type Paso = 'telefono' | 'codigo'
 
@@ -13,6 +13,7 @@ export function LoginForm({ expirada }: Readonly<{ expirada?: boolean }>) {
   const [mensaje, setMensaje] = useState<string | null>(expirada ? 'Tu sesión venció. Entra de nuevo.' : null)
   const [cargando, setCargando] = useState(false)
   const enCurso = useRef(false)
+  useEffect(() => { if (paso === 'codigo') document.getElementById('codigo')?.focus() }, [paso])
 
   async function enviar(ruta: string, cuerpo: Record<string, string>) {
     setCargando(true)
@@ -68,7 +69,7 @@ export function LoginForm({ expirada }: Readonly<{ expirada?: boolean }>) {
         <p className="subheading">Te enviamos un código por WhatsApp. Cada persona ve solo sus propios datos.</p>
 
         {paso === 'telefono' ? (
-          <form onSubmit={pedirCodigo} className="login-form">
+          <form onSubmit={pedirCodigo} className="login-form" aria-busy={cargando}>
             <label htmlFor="telefono">Tu número de WhatsApp</label>
             <input
               id="telefono"
@@ -76,6 +77,7 @@ export function LoginForm({ expirada }: Readonly<{ expirada?: boolean }>) {
               type="tel"
               inputMode="numeric"
               autoComplete="tel"
+              maxLength={25}
               placeholder="573001234567"
               value={telefono}
               onChange={(e) => setTelefono(e.target.value)}
@@ -86,7 +88,7 @@ export function LoginForm({ expirada }: Readonly<{ expirada?: boolean }>) {
             </button>
           </form>
         ) : (
-          <form onSubmit={entrar} className="login-form">
+          <form onSubmit={entrar} className="login-form" aria-busy={cargando}>
             <label htmlFor="codigo">Código de 6 dígitos</label>
             <input
               id="codigo"
@@ -104,7 +106,7 @@ export function LoginForm({ expirada }: Readonly<{ expirada?: boolean }>) {
             <button className="primary-button" type="submit" disabled={cargando || codigo.length !== 6}>
               {cargando ? 'Comprobando…' : 'Entrar'}
             </button>
-            <button className="link-button" type="button" onClick={() => { setPaso('telefono'); setCodigo(''); setMensaje(null) }}>
+            <button className="link-button" type="button" disabled={cargando} onClick={() => { setPaso('telefono'); setCodigo(''); setMensaje(null) }}>
               Usar otro número o pedir otro código
             </button>
           </form>

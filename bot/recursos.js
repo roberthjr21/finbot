@@ -13,3 +13,11 @@ export async function acumularMedia(stream, maximo, tiempoMs = 15_000) {
     return Buffer.concat(partes);
   } finally { clearTimeout(temporizador); stream.destroy(); }
 }
+
+// Libera el trabajo si el transporte no responde. No puede retirar un mensaje ya enviado.
+export async function enviarConTiempo(enviar, tiempoMs = 6000) {
+  let timer;
+  try {
+    return await Promise.race([Promise.resolve().then(enviar), new Promise((_,reject) => { timer=setTimeout(()=>reject(new Error('Tiempo de envío agotado')),tiempoMs); })]);
+  } finally { clearTimeout(timer); }
+}
