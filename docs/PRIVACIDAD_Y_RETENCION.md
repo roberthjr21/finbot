@@ -54,3 +54,9 @@ El cifrado de la cola usa AES-256-GCM, nonce aleatorio y vinculación autenticad
 8. Bloquear el número en la configuración si el titular no desea una cuenta nueva; con registro abierto un mensaje nuevo puede crear otra cuenta vacía. El comando no puede borrar datos de conversaciones de otra persona ni de WhatsApp.
 
 `secure_delete` y `VACUUM` reducen restos dentro de SQLite, pero no garantizan borrado forense de SSD, sistemas con snapshots, copias externas o medios compartidos. Los WAL y lectores activos importan. Usar cifrado de disco, directorios privados y políticas de copias es necesario. Referencia: [SQLite PRAGMA secure_delete](https://www.sqlite.org/pragma.html#pragma_secure_delete).
+
+## Metadatos de fiabilidad de fase 3
+
+`entrada_modos` conserva por cuenta la proyección real/prueba y una sesión opaca, hasta la eliminación autorizada de la cuenta. No conserva mensajes ni cifras. La herramienta offline contempla esta tabla y verifica el esquema v9 antes de preparar una eliminación.
+
+Los trabajos de análisis usan la misma retención/cifrado de entradas: instantánea de cifras y categorías sin descripciones libres, hasta completar, cancelar, agotar reintentos o caducar (72 horas por defecto). Su respuesta reservada usa la retención de la outbox (7 días). Los metadatos de modo de los trabajos siguen su retención terminal y posterior minimización en huellas. El reinicio elimina los cuerpos de pruebas no recuperables, no los convierte en operaciones reales ni altera movimientos históricos. El mantenimiento y las migraciones solo se ejercitaron sobre bases de pruebas en esta fase.

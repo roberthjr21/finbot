@@ -57,3 +57,23 @@ Propuesta externa: dos destinos cifrados independientes, acceso mínimo, clave g
 4. Configurar `DB_ARCHIVO` hacia la copia recuperada y las claves correctas, sin cambiar el archivo original. Las migraciones nuevas crearán copia previa verificada cuando corresponda.
 5. Comprobar cuentas, balances, deudas/préstamos, auditoría, recurrentes, estados de cola y notificaciones. Revisar posibles avisos repetidos en la ventana de entrega externa.
 6. Validar con un entorno aislado y obtener aprobación antes de exponerlo. No borrar WAL/SHM de una base activa.
+
+## Entradas y modo de prueba (fase 3)
+
+La migración v8 cancela las entradas heredadas cuyo modo no se puede demostrar; no ejecuta su contenido. Cada entrada nueva captura `modo_operacion`, `sesion_prueba` y el comando de control dentro de la transacción de admisión. AES-GCM autentica también estos metadatos. La proyección por cuenta solo cambia si el mensaje fue admitido y no era duplicado. Así `/prueba on`, un gasto y `/prueba off` mantienen el orden de admisión incluso antes de que un trabajador los atienda.
+
+Una sesión temporal pertenece a un único arranque de FinBot. Tras reiniciar, las entradas de prueba del arranque anterior se cancelan, se elimina su cuerpo y se reserva un aviso durable. La proyección sigue en prueba hasta recibir `/prueba on` (sesión nueva) o `/prueba off`; nunca vuelve a real por ausencia de memoria. Si desaparece la base temporal durante una ejecución, se falla o cancela, sin recurrir a la base real. Una confirmación de audio o recibo de prueba no puede recuperar contexto financiero real. Los mensajes normales capturados como reales seleccionan explícitamente la base persistente.
+
+## Análisis recuperables (fase 3)
+
+La migración v9 permite trabajos de entrada con clase `analisis` y respuestas reservadas (`esperando=1`, `dependencia`). El mensaje confirma sus acciones financieras, la instantánea numérica del análisis y la reserva de respuesta en una transacción. La llamada al proveedor se hace fuera del bloqueo SQLite. El trabajo solo pasa a `hecho` junto con el resultado en la fila de outbox ya reservada; no se crea otra respuesta al reintentar.
+
+Una caída antes del commit revierte las operaciones financieras; una caída durante el análisis o antes de guardar el resultado repite únicamente la lectura de la instantánea y la generación de texto. Después del commit del resultado solo queda enviar la outbox. Los errores de Gemini/Claude producen el análisis local y el diagnóstico `proveedor_ia_no_disponible`; no se registra el cuerpo del error del proveedor. Si el trabajo caduca, se cancela o agota reintentos, el mantenimiento libera la respuesta reservada con un fallo verificable. Las instantáneas son cuerpos cifrados sujetos a la retención de la cola, no un historial nuevo de descripciones financieras.
+
+## Orden de las respuestas de WhatsApp (fase 3)
+
+Las salidas conversacionales (`carril=conversacion`) respetan FIFO por cuenta, incluso si la primera está en backoff o esperando un análisis. Un trabajo posterior no puede reclamar el transporte hasta que el anterior termine, caduque, se cancele o agote su política. Las cuentas diferentes conservan la concurrencia configurada (4 por defecto, máximo 16); para cada cuenta hay como máximo un envío en procesamiento. La cola tiene límites persistentes globales y por cuenta.
+
+Recordatorios, alertas, recurrentes y avisos de saturación son notificaciones independientes: pueden saltar una conversación en espera y no bloquean sus respuestas por horarios de silencio o cupos. Las salidas heredadas se consideran conservadoramente conversacionales. Los OTP del acceso web siguen siendo un canal inmediato independiente de la conversación. No se utilizan envíos directos para el aviso de saturación de entrada.
+
+Este orden es el de los intentos de envío locales y sus confirmaciones. WhatsApp no ofrece entrega externa exactamente una vez: una caída después de aceptar el envío y antes de confirmar SQLite puede repetirlo; un timeout no permite retirar un mensaje en tránsito, y WhatsApp o el dispositivo pueden mostrar mensajes tarde. Cada fila mantiene un `messageId` estable en los reintentos. No se promete FIFO absoluto en el dispositivo ni se cambian las garantías de idempotencia de las operaciones financieras.

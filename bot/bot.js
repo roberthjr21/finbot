@@ -1,3 +1,4 @@
+import { admitirEntrada, procesarEntrada, recuperarEntradas } from './entradas.js';
 import { completarMedia } from './respuesta-media.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
@@ -17,7 +18,7 @@ import { fechaBogota } from './fechas.js';
 import { hayIA, interpretar, nombreProveedor } from './ia.js';
 import { interpretarComando, atajoSinIA, pideGuia, GUIA } from './comandos.js';
 import { ejecutar } from './acciones.js';
-import { responderAnalisis } from './analisis.js';
+import { reservarAnalisis, procesarAnalisis } from './analisis-trabajos.js';
 import { iniciarApi } from './api.js';
 import { acotarAcciones, sinConfirmaciones, registroAbierto } from './politicas.js';
 import { temaDeGuia } from './consejos.js';
@@ -94,13 +95,13 @@ async function recibirPersistente(usuario, jid, msg) {
   let r;
   try {
     const contenido = codificarMensaje(msg);
-    r = trabajos.admitir({ clave: `entrada:${usuario}:${msg.key.id}`, usuario, tipo: 'entrada', contenido });
+    r = admitirEntrada({ usuario, mensajeId: msg.key.id, texto: textoDe(msg).trim(), contenido });
   }
   catch { r = { ok: false }; }
   if (!r.ok) {
     console.error('Mensaje no admitido: cola saturada o almacenamiento no disponible');
-    // Fuera de la cola llena: aviso explícito, sin marcar el mensaje como procesado.
-    try { await enviarAUsuario(usuario, '⏳ No pude guardar tu mensaje porque estoy saturado. Revisa /ultimos y vuelve a enviarlo en unos minutos.'); }
+    // Aviso separado de la conversación, sin adelantar respuestas mediante un envío directo.
+    try { outbox.encolar({ clave: `saturacion:${usuario}:${msg.key.id}`, usuario, jid, evento: { tipo:'saturacion' }, texto:'⏳ No pude guardar tu mensaje porque estoy saturado. Revisa /ultimos y vuelve a enviarlo en unos minutos.' }); trabajadorSalida?.despertar(); }
     catch { console.error('Tampoco se pudo entregar el aviso de saturación'); }
     return;
   }
@@ -336,7 +337,6 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
 
   const acotadas = acotarAcciones(acciones);
   const efectos = [];
-  let completado = false;
   try {
     const procesado = db.enTransaccion(() => {
       // Revisa dentro del bloqueo de escritura para cubrir dos instancias del bot.
@@ -348,44 +348,22 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
       if (acotadas.length < acciones.length) {
         respuestas.push('⚠️ Procesé solo las primeras 5 acciones de este mensaje.');
       }
-      db.marcarProcesado(id);
+      const requiereAnalisis = acotadas.some(a => a?.nombre === 'analizar_gastos');
+      if (!respuestas.length && !requiereAnalisis) respuestas.push('🤔 No encontré nada para registrar. Cuéntame un gasto o ingreso, por ejemplo: "compré aceite por 20 mil".');
       if (respuestas.length) guardarRespuesta(usuario, jid, (db.pruebaActiva(usuario) ? '🧪 MODO PRUEBA · Datos temporales.\n\n' : '') + respuestas.join('\n\n'), msg);
+      if (requiereAnalisis) reservarAnalisis({ usuario, mensajeId: msg.key.id, jid, hoy, usarIA: !iaFallo });
+      db.marcarProcesado(id);
       return true;
     });
     if (!procesado) return;
     efectos.forEach((efecto) => efecto());
-    completado = true;
   } catch (error) {
     console.error('No se pudo completar el mensaje de forma atómica:', error.message);
     throw error;
   }
 
-  // El análisis de gastos solo lee datos y llama a la IA, así que va fuera de la transacción.
-  if (completado && acotadas.some((accion) => accion?.nombre === 'analizar_gastos')) {
-    try {
-      // Si la IA acaba de fallar, el análisis se calcula directo, sin esperar otra vez a la IA.
-      respuestas.push(await responderAnalisis(usuario, hoy, iaFallo ? { generar: null } : undefined));
-    } catch (error) {
-      console.error('No se pudo analizar los gastos:', error.message);
-      respuestas.push('⚠️ No pude analizar tus gastos ahora mismo. Intenta de nuevo en un momento.');
-    }
-  }
+  trabajadorSalida?.despertar();
 
-  if (respuestas.length === 0) {
-    respuestas.push(
-      '🤔 No encontré nada para registrar. ' +
-      'Cuéntame un gasto o ingreso, por ejemplo: ' +
-      '"compré aceite por 20 mil".'
-    );
-  }
-
-  await enviarTexto(
-    sock,
-    jid,
-    (db.pruebaActiva(usuario) ? '🧪 MODO PRUEBA · Datos temporales, no aparecen en la web.\n\n' : '') + respuestas.join('\n\n'),
-    msg,
-    acotadas.some(a => a?.nombre === 'analizar_gastos') ? ':analisis' : ''
-  );
 }
 
 // ==========================================
@@ -779,14 +757,18 @@ async function enviarAUsuario(telefono, texto, opciones = {}) {
 }
 trabajadorEntrada = trabajos.crearTrabajador({
   tipo: 'entrada', mantenimiento: () => {
-    const pendientes = db.basePersistente().prepare("SELECT id, usuario FROM trabajos WHERE tipo = 'entrada' AND estado = 'agotado' AND avisado = 0 LIMIT 20").all();
+    recuperarEntradas();
+    outbox.recuperarRespuestas();
+    const pendientes = db.basePersistente().prepare("SELECT id, clave, usuario FROM trabajos WHERE tipo = 'entrada' AND clase='mensaje' AND estado = 'agotado' AND avisado = 0 LIMIT 20").all();
     for (const t of pendientes) {
-      outbox.encolar({ clave: `agotado:${t.id}`, usuario: t.usuario, texto: '⚠️ No pude completar un mensaje tras los reintentos. Revisa /ultimos antes de reenviarlo; no se guardan cambios financieros parciales.' });
+      outbox.encolar({ clave: `agotado:${t.clave}`, usuario: t.usuario, texto: '⚠️ No pude completar un mensaje tras los reintentos. Revisa /ultimos antes de reenviarlo; no se guardan cambios financieros parciales.' });
       db.basePersistente().prepare('UPDATE trabajos SET avisado = 1 WHERE id = ?').run(t.id);
     }
   }, concurrencia: entero('COLA_CONCURRENCIA', 4), habilitado: () => conectado && !cerrando,
   procesar: async (tarea) => {
     if (!admitido(tarea.usuario) || db.usuarioPorTelefono(tarea.usuario)?.estado !== 'activo') return;
+    return procesarEntrada(tarea, async () => {
+    if (tarea.clase === 'analisis') return procesarAnalisis(tarea);
     const msg = decodificarMensaje(trabajos.leerContenido(tarea.contenido, tarea));
     if (!esChatIndividual(msg.key.remoteJid)) throw new Error('Chat no permitido');
     const texto = textoDe(msg).trim();
@@ -794,9 +776,10 @@ trabajadorEntrada = trabajos.crearTrabajador({
       if (texto) await atender(socketActivo, msg.key.remoteJid, msg, tarea.usuario, texto);
       else await responderSinTexto(socketActivo, msg.key.remoteJid, msg, tarea.usuario);
     });
+    });
   },
 });
-trabajadorSalida = trabajos.crearTrabajador({ tipo: 'salida', habilitado: () => conectado && !cerrando, procesar: tarea => outbox.entregar(tarea, enviarAUsuario) });
+trabajadorSalida = trabajos.crearTrabajador({ tipo: 'salida', habilitado: () => conectado && !cerrando, mantenimiento: () => outbox.recuperarRespuestas(), procesar: tarea => outbox.entregar(tarea, enviarAUsuario) });
 
 const servidorApi = iniciarApi({ enviar: enviarAUsuario });
 // Recordatorios, recurrentes y alertas (ver programador.js)

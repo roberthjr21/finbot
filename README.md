@@ -199,3 +199,7 @@ Consulta [el informe actualizado](docs/AUDITORIA_FASE_2.md), [retención y priva
 Las pruebas de navegador requieren `cd web`, `pnpm exec playwright install chromium`, `pnpm build` y `pnpm test:e2e`. Ejecutan Chromium contra API/SQLite de pruebas locales; WhatsApp, IA externa, Vercel y el túnel de producción requieren una validación operativa separada.
 
 `./iniciar.sh` es un lanzador exclusivo de desarrollo (ejecuta `pnpm dev` y rechaza `NODE_ENV=production`). Producción debe iniciar el bot y el panel compilado como servicios separados.
+
+## Tercera etapa: integridad y recuperación
+
+La [auditoría de fase 3](docs/AUDITORIA_FASE_3.md) protege el modo de prueba capturado al recibir mensajes, persiste análisis recuperables y mantiene FIFO de respuestas conversacionales por cuenta. Consulta las políticas de recuperación y límites de entrega en [operación](docs/OPERACION_Y_RECUPERACION.md).

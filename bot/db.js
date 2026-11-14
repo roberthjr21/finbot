@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizar } from './categorias.js';
@@ -22,6 +23,14 @@ const db = new Proxy(dbReal, {
   },
 });
 const pruebas = new Map();
+const sesionesPrueba = new Map();
+const modoEntrada = new AsyncLocalStorage();
+export const sesionPrueba = usuario => sesionesPrueba.get(usuario);
+export const modoCapturado = () => modoEntrada.getStore();
+export function conModoCapturado(usuario, metadatos, tarea) {
+  if (!['real', 'prueba'].includes(metadatos.modo_operacion)) throw new Error('Modo de entrada desconocido');
+  return modoEntrada.run({ usuario, ...metadatos }, () => conBasePrueba(usuario, tarea));
+}
 
 function crearBasePrueba() {
   const temporal = new DatabaseSync(':memory:');
@@ -37,19 +46,31 @@ function crearBasePrueba() {
   }
 }
 
-export function activarPrueba(usuario) {
+export function activarPrueba(usuario, sesion = modoEntrada.getStore()?.sesion_prueba ?? randomUUID()) {
+  if (pruebas.has(usuario) && sesionesPrueba.get(usuario) !== sesion) desactivarPrueba(usuario);
   if (!pruebas.has(usuario)) pruebas.set(usuario, crearBasePrueba());
+  sesionesPrueba.set(usuario, sesion);
   return true;
 }
-export function pruebaActiva(usuario) { return pruebas.has(usuario); }
+export function pruebaActiva(usuario) {
+  const capturado = modoEntrada.getStore();
+  return capturado?.usuario === usuario ? capturado.modo_operacion === 'prueba' : pruebas.has(usuario);
+}
 export function desactivarPrueba(usuario) {
   const temporal = pruebas.get(usuario);
   if (!temporal) return false;
   pruebas.delete(usuario);
+  sesionesPrueba.delete(usuario);
   temporal.close();
   return true;
 }
 export function conBasePrueba(usuario, tarea) {
+  const capturado = modoEntrada.getStore();
+  if (capturado) {
+    if (capturado.usuario !== usuario) throw new Error('La entrada pertenece a otra cuenta');
+    if (capturado.modo_operacion === 'real') return baseTemporal.run(undefined, tarea);
+    if (!pruebas.has(usuario) || sesionesPrueba.get(usuario) !== capturado.sesion_prueba) throw new Error('Sesión de prueba perdida');
+  }
   const temporal = pruebas.get(usuario);
   return temporal ? baseTemporal.run(temporal, tarea) : tarea();
 }

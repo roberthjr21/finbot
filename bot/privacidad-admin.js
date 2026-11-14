@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { comprobarEspacio } from './db-admin.js';
 
-const TABLAS = ['movimientos','presupuestos','deudas','prestamos','recordatorios','recurrentes','metas_aportes','metas','alertas_config','alertas_enviadas','alertas_reservadas','contexto','preferencias','uso_diario','auditoria','trabajos'];
+const TABLAS = ['movimientos','presupuestos','deudas','prestamos','recordatorios','recurrentes','metas_aportes','metas','alertas_config','alertas_enviadas','alertas_reservadas','contexto','preferencias','uso_diario','auditoria','trabajos','entrada_modos'];
 const hash = v => createHash('sha256').update(v).digest('hex');
 function filas(b, usuario) {
   const resultado = {};
@@ -21,7 +21,7 @@ function filas(b, usuario) {
 }
 const huella = (b, usuario) => hash(JSON.stringify(filas(b, usuario)));
 export function prepararEliminacion(b, usuario, ahora = Date.now()) {
-  if (b.prepare('SELECT MAX(version) AS v FROM schema_migraciones').get().v !== 7) throw new Error('Versión de esquema no auditada para eliminación');
+  if (b.prepare('SELECT MAX(version) AS v FROM schema_migraciones').get().v !== 9) throw new Error('Versión de esquema no auditada para eliminación');
   if (!/^\d{8,15}$/.test(usuario) || !b.prepare('SELECT 1 FROM usuarios WHERE telefono = ?').get(usuario)) throw new Error('Cuenta no encontrada');
   b.exec('BEGIN IMMEDIATE');
   try {

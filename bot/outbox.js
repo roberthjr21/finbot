@@ -5,9 +5,9 @@ import * as recordatorios from './recordatorios.js';
 import * as alertas from './alertas.js';
 import { fechaBogota } from './fechas.js';
 
-export function encolar({ clave, usuario, texto, jid, evento, ahora = Date.now() }) {
+export function encolar({ clave, usuario, texto, jid, evento, ahora = Date.now(), esperando = 0, dependencia = null }) {
   if (typeof texto !== 'string' || !texto || texto.length > 16000) throw new Error('Notificación inválida');
-  const r = trabajos.admitir({ clave, usuario, tipo: 'salida', contenido: JSON.stringify({ texto, jid, evento }), ahora, vidaMs: 7 * 86400_000 });
+  const r = trabajos.admitir({ clave, usuario, tipo: 'salida', contenido: JSON.stringify({ texto, jid, evento }), ahora, vidaMs: 7 * 86400_000, esperando, dependencia, carril: evento ? 'notificacion' : 'conversacion' });
   if (!r.ok) throw new Error('Outbox saturada');
   return r;
 }
@@ -63,8 +63,24 @@ export async function entregar(tarea, enviar, ahora = new Date()) {
   };
 }
 
+// Un análisis agotado/cancelado deja una respuesta verificable y libera la conversación.
+export function recuperarRespuestas(ahora = Date.now()) {
+  trabajos.purgarVencidos(ahora);
+  return db.enTransaccionPersistente(() => {
+    const filas = db.basePersistente().prepare(`SELECT s.* FROM trabajos s LEFT JOIN trabajos a ON a.id=s.dependencia
+      WHERE s.tipo='salida' AND s.estado='pendiente' AND s.esperando=1 AND (a.id IS NULL OR a.estado IN ('agotado','cancelado')) LIMIT 500`).all();
+    for (const s of filas) {
+      const datos = JSON.parse(trabajos.leerContenido(s.contenido,s));
+      trabajos.completarRespuesta(s.clave,JSON.stringify({ ...datos, texto:'⚠️ No pude completar el análisis pendiente. No volví a ejecutar movimientos financieros. Puedes pedir /analisis nuevamente.' }));
+      db.basePersistente().prepare("UPDATE trabajos SET error='analisis_no_completado' WHERE id=?").run(s.id);
+    }
+    return filas.length;
+  });
+}
+
 // Despacho acotado útil para el programador y las pruebas con reloj simulado.
 export async function despachar({ enviar, ahora = new Date(), maximo = 100 }) {
+  recuperarRespuestas(ahora.getTime());
   let enviados = 0;
   for (let i = 0; i < maximo; i++) {
     const tarea = trabajos.reclamar('salida', { ahora: ahora.getTime() });
