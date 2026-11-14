@@ -21,7 +21,7 @@ function filas(b, usuario) {
 }
 const huella = (b, usuario) => hash(JSON.stringify(filas(b, usuario)));
 export function prepararEliminacion(b, usuario, ahora = Date.now()) {
-  if (b.prepare('SELECT MAX(version) AS v FROM schema_migraciones').get().v !== 8) throw new Error('Versión de esquema no auditada para eliminación');
+  if (b.prepare('SELECT MAX(version) AS v FROM schema_migraciones').get().v !== 9) throw new Error('Versión de esquema no auditada para eliminación');
   if (!/^\d{8,15}$/.test(usuario) || !b.prepare('SELECT 1 FROM usuarios WHERE telefono = ?').get(usuario)) throw new Error('Cuenta no encontrada');
   b.exec('BEGIN IMMEDIATE');
   try {

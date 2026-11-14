@@ -457,7 +457,7 @@ function ejecutarAtomico(accion, { usuario, hoy, mensajeId, indice, efectos }) {
     }
 
     // El análisis llama a la IA (asíncrono), así que no puede correr dentro de la
-    // transacción: bot.js lo atiende justo después, con responderAnalisis().
+    // transacción: bot.js reserva un trabajo durable con una instantánea antes de confirmar.
     case 'analizar_gastos':
       return null;
 

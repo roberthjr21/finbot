@@ -54,16 +54,25 @@ export function retenerTerminales(ahora = Date.now()) {
     return filas.length;
   });
 }
-export function admitir({ clave, usuario, tipo, contenido, ahora = Date.now(), vidaMs = 72 * 3600_000, maximo = 5000, porUsuario = 500, modo_operacion = null, sesion_prueba = null, control_modo = null }) {
+export function admitir({ clave, usuario, tipo, contenido, ahora = Date.now(), vidaMs = 72 * 3600_000, maximo = 5000, porUsuario = 500, modo_operacion = null, sesion_prueba = null, control_modo = null, clase = 'mensaje', carril = 'conversacion', esperando = 0, dependencia = null }) {
   if (!['entrada','salida'].includes(tipo) || typeof contenido !== 'string' || Buffer.byteLength(contenido) > 256 * 1024) throw new Error('Trabajo inválido o demasiado grande');
   return db.enTransaccionPersistente(() => {
     if (base().prepare('SELECT id FROM trabajos WHERE clave = ?').get(clave) || base().prepare('SELECT 1 FROM trabajos_huellas WHERE huella = ?').get(huella(clave))) return { ok: true, duplicado: true };
     const cantidad = (extra = '', params = []) => base().prepare(`SELECT COUNT(*) AS n FROM trabajos WHERE estado IN ('pendiente','procesando') AND tipo = ? ${extra}`).get(tipo, ...params).n;
     if (cantidad() >= maximo || cantidad('AND usuario = ?', [usuario]) >= porUsuario) return { ok: false, motivo: 'saturado' };
-    const r = base().prepare('INSERT INTO trabajos (clave, usuario, tipo, contenido, disponible, creado, expira, modo_operacion, sesion_prueba, control_modo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(clave, usuario, tipo, cifrar(contenido, { tipo, usuario, clave, modo_operacion, sesion_prueba, control_modo }), ahora, ahora, ahora + vidaMs, modo_operacion, sesion_prueba, control_modo);
+    const r = base().prepare('INSERT INTO trabajos (clave, usuario, tipo, contenido, disponible, creado, expira, modo_operacion, sesion_prueba, control_modo, clase, carril, esperando, dependencia) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(clave, usuario, tipo, cifrar(contenido, { tipo, usuario, clave, modo_operacion, sesion_prueba, control_modo }), ahora, ahora, ahora + vidaMs, modo_operacion, sesion_prueba, control_modo, clase, carril, esperando, dependencia);
     return { ok: true, id: Number(r.lastInsertRowid) };
   });
+}
+
+// Se usa dentro de la transacción que confirma el análisis: misma fila e ID de WhatsApp.
+export function completarRespuesta(clave, contenido) {
+  if (typeof contenido !== 'string' || Buffer.byteLength(contenido) > 256 * 1024) throw new Error('Respuesta inválida');
+  const fila = base().prepare("SELECT * FROM trabajos WHERE clave=? AND tipo='salida' AND estado='pendiente' AND esperando=1").get(clave);
+  if (!fila) return false;
+  base().prepare('UPDATE trabajos SET contenido=?, esperando=0 WHERE id=?').run(cifrar(contenido,fila),fila.id);
+  return true;
 }
 
 export function purgarVencidos(ahora = Date.now()) {
@@ -78,7 +87,7 @@ export function reclamar(tipo, { ahora = Date.now(), leaseMs = 120000, dueno = r
       .run(tipo, ahora, ahora, ahora, maxIntentos);
     b.prepare("UPDATE trabajos SET estado = 'pendiente', dueno = NULL, lease_hasta = 0 WHERE tipo = ? AND estado = 'procesando' AND lease_hasta <= ?").run(tipo, ahora);
     const fila = b.prepare(`SELECT t.* FROM trabajos t
-      WHERE t.tipo = ? AND t.estado = 'pendiente' AND t.disponible <= ?
+      WHERE t.tipo = ? AND t.estado = 'pendiente' AND t.disponible <= ? AND t.esperando = 0
         AND (t.tipo = 'salida' OR NOT EXISTS (SELECT 1 FROM trabajos p WHERE p.usuario = t.usuario AND p.tipo = t.tipo AND p.id < t.id AND p.estado IN ('pendiente','procesando')))
         AND NOT EXISTS (SELECT 1 FROM trabajos p WHERE p.usuario = t.usuario AND p.tipo = t.tipo AND p.estado = 'procesando')
       ORDER BY COALESCE((SELECT MAX(p.ultimo_inicio) FROM trabajos p WHERE p.usuario = t.usuario AND p.tipo = t.tipo), 0), t.id LIMIT 1`).get(tipo, ahora);

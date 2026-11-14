@@ -232,6 +232,14 @@ CREATE TRIGGER IF NOT EXISTS auditoria_borrado_prestamos AFTER DELETE ON prestam
     UPDATE trabajos SET estado='cancelado', contenido=NULL, dueno=NULL, lease_hasta=0, error='modo_heredado_desconocido', avisado=0
       WHERE tipo='entrada' AND estado IN ('pendiente','procesando');
   ` },
+  { version: 9, nombre: 'análisis recuperables y carriles de salida', sql: `
+    ALTER TABLE trabajos ADD COLUMN clase TEXT NOT NULL DEFAULT 'mensaje' CHECK (clase IN ('mensaje','analisis'));
+    ALTER TABLE trabajos ADD COLUMN carril TEXT NOT NULL DEFAULT 'conversacion' CHECK (carril IN ('conversacion','notificacion'));
+    ALTER TABLE trabajos ADD COLUMN esperando INTEGER NOT NULL DEFAULT 0 CHECK (esperando IN (0,1));
+    ALTER TABLE trabajos ADD COLUMN dependencia INTEGER;
+    CREATE INDEX idx_trabajos_orden ON trabajos(usuario,tipo,carril,estado,id);
+    CREATE INDEX idx_trabajos_dependencia ON trabajos(dependencia) WHERE esperando=1;
+  ` },
 ];
 
 const hayDatos = (db) =>

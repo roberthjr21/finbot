@@ -266,7 +266,7 @@ test('codec real de Baileys conserva texto, timestamp y claves multimedia sin du
 
 test('diagnóstico de solo lectura informa estados sin exponer cuerpos ni datos de cuentas', async () => {
   const {estadoArchivo}=await import('./estado.js');
-  const r=estadoArchivo(process.env.DB_ARCHIVO);assert.equal(r.integridad,'ok');assert.equal(r.version,8);
+  const r=estadoArchivo(process.env.DB_ARCHIVO);assert.equal(r.integridad,'ok');assert.equal(r.version,9);
   assert.ok(Number(r.espacioLibreBytes)>0);
   assert.ok(!JSON.stringify(r).includes(U));assert.ok(!JSON.stringify(r).includes('dato personal'));
   assert.throws(()=>estadoArchivo(path.join(temporal,'no-existe.db')),/debe existir/);
