@@ -57,3 +57,9 @@ Propuesta externa: dos destinos cifrados independientes, acceso mínimo, clave g
 4. Configurar `DB_ARCHIVO` hacia la copia recuperada y las claves correctas, sin cambiar el archivo original. Las migraciones nuevas crearán copia previa verificada cuando corresponda.
 5. Comprobar cuentas, balances, deudas/préstamos, auditoría, recurrentes, estados de cola y notificaciones. Revisar posibles avisos repetidos en la ventana de entrega externa.
 6. Validar con un entorno aislado y obtener aprobación antes de exponerlo. No borrar WAL/SHM de una base activa.
+
+## Entradas y modo de prueba (fase 3)
+
+La migración v8 cancela las entradas heredadas cuyo modo no se puede demostrar; no ejecuta su contenido. Cada entrada nueva captura `modo_operacion`, `sesion_prueba` y el comando de control dentro de la transacción de admisión. AES-GCM autentica también estos metadatos. La proyección por cuenta solo cambia si el mensaje fue admitido y no era duplicado. Así `/prueba on`, un gasto y `/prueba off` mantienen el orden de admisión incluso antes de que un trabajador los atienda.
+
+Una sesión temporal pertenece a un único arranque de FinBot. Tras reiniciar, las entradas de prueba del arranque anterior se cancelan, se elimina su cuerpo y se reserva un aviso durable. La proyección sigue en prueba hasta recibir `/prueba on` (sesión nueva) o `/prueba off`; nunca vuelve a real por ausencia de memoria. Si desaparece la base temporal durante una ejecución, se falla o cancela, sin recurrir a la base real. Una confirmación de audio o recibo de prueba no puede recuperar contexto financiero real. Los mensajes normales capturados como reales seleccionan explícitamente la base persistente.

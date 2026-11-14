@@ -9,10 +9,10 @@ export function interpretarPrueba(texto) {
   return null;
 }
 
-export function responderPrueba(usuario, opcion) {
+export function responderPrueba(usuario, opcion, { sesion } = {}) {
   if (['on', 'activar'].includes(opcion)) {
-    if (db.pruebaActiva(usuario)) return '🧪 El modo de pruebas ya está activo. Tus datos temporales siguen disponibles.';
-    db.activarPrueba(usuario);
+    if (db.pruebaActiva(usuario) && (!sesion || db.sesionPrueba(usuario) === sesion)) return '🧪 El modo de pruebas ya está activo. Tus datos temporales siguen disponibles.';
+    db.activarPrueba(usuario, sesion);
     return '🧪 MODO PRUEBA ACTIVADO. Tus próximos movimientos, deudas, metas y presupuestos se guardarán únicamente en memoria y NO aparecerán en la web. Empiezas con datos ficticios vacíos. Usa /prueba off para salir. Al reiniciar FinBot se perderán las pruebas.';
   }
   if (['off', 'desactivar'].includes(opcion)) {

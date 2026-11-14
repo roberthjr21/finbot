@@ -224,6 +224,14 @@ CREATE TRIGGER IF NOT EXISTS auditoria_borrado_prestamos AFTER DELETE ON prestam
     CREATE INDEX idx_trabajos_huellas_usuario ON trabajos_huellas(usuario_hash);
     CREATE INDEX idx_trabajos_retencion ON trabajos(estado, expira);
   ` },
+  { version: 8, nombre: 'modo capturado en la admisión de entradas', sql: `
+    ALTER TABLE trabajos ADD COLUMN modo_operacion TEXT CHECK (modo_operacion IN ('real','prueba'));
+    ALTER TABLE trabajos ADD COLUMN sesion_prueba TEXT;
+    ALTER TABLE trabajos ADD COLUMN control_modo TEXT;
+    CREATE TABLE entrada_modos (usuario TEXT PRIMARY KEY, modo TEXT NOT NULL CHECK (modo IN ('real','prueba')), sesion TEXT);
+    UPDATE trabajos SET estado='cancelado', contenido=NULL, dueno=NULL, lease_hasta=0, error='modo_heredado_desconocido', avisado=0
+      WHERE tipo='entrada' AND estado IN ('pendiente','procesando');
+  ` },
 ];
 
 const hayDatos = (db) =>

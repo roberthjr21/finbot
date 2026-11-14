@@ -6,7 +6,9 @@ function claves() {
   if (process.env.NODE_ENV === 'production' && (!actual || actual.length < 32)) throw new Error('La cola requiere secreto de 32 caracteres en producción');
   return [actual, process.env.COLA_SECRETO_ANTERIOR].filter(Boolean).map(s => createHash('sha256').update(s).digest());
 }
-const asociar = ({ tipo, usuario, clave }) => Buffer.from(`${tipo}:${usuario}:${clave}`);
+const asociar = ({ tipo, usuario, clave, modo_operacion, sesion_prueba, control_modo }) => Buffer.from(
+  `${tipo}:${usuario}:${clave}` + (modo_operacion ? JSON.stringify([modo_operacion, sesion_prueba ?? null, control_modo ?? null]) : '')
+);
 function cifrar(texto, datos) {
   const [clave] = claves();
   if (!clave) return texto; // Desarrollo sin secretos: mismo modelo de disco privado que SQLite.
@@ -52,14 +54,14 @@ export function retenerTerminales(ahora = Date.now()) {
     return filas.length;
   });
 }
-export function admitir({ clave, usuario, tipo, contenido, ahora = Date.now(), vidaMs = 72 * 3600_000, maximo = 5000, porUsuario = 500 }) {
+export function admitir({ clave, usuario, tipo, contenido, ahora = Date.now(), vidaMs = 72 * 3600_000, maximo = 5000, porUsuario = 500, modo_operacion = null, sesion_prueba = null, control_modo = null }) {
   if (!['entrada','salida'].includes(tipo) || typeof contenido !== 'string' || Buffer.byteLength(contenido) > 256 * 1024) throw new Error('Trabajo inválido o demasiado grande');
   return db.enTransaccionPersistente(() => {
     if (base().prepare('SELECT id FROM trabajos WHERE clave = ?').get(clave) || base().prepare('SELECT 1 FROM trabajos_huellas WHERE huella = ?').get(huella(clave))) return { ok: true, duplicado: true };
     const cantidad = (extra = '', params = []) => base().prepare(`SELECT COUNT(*) AS n FROM trabajos WHERE estado IN ('pendiente','procesando') AND tipo = ? ${extra}`).get(tipo, ...params).n;
     if (cantidad() >= maximo || cantidad('AND usuario = ?', [usuario]) >= porUsuario) return { ok: false, motivo: 'saturado' };
-    const r = base().prepare('INSERT INTO trabajos (clave, usuario, tipo, contenido, disponible, creado, expira) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(clave, usuario, tipo, cifrar(contenido, { tipo, usuario, clave }), ahora, ahora, ahora + vidaMs);
+    const r = base().prepare('INSERT INTO trabajos (clave, usuario, tipo, contenido, disponible, creado, expira, modo_operacion, sesion_prueba, control_modo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(clave, usuario, tipo, cifrar(contenido, { tipo, usuario, clave, modo_operacion, sesion_prueba, control_modo }), ahora, ahora, ahora + vidaMs, modo_operacion, sesion_prueba, control_modo);
     return { ok: true, id: Number(r.lastInsertRowid) };
   });
 }
@@ -114,8 +116,8 @@ export function fallar(tarea, { ahora = Date.now(), maxIntentos = tarea.tipo ===
     return true;
   });
 }
-export function cancelar(clave) {
-  return base().prepare("UPDATE trabajos SET estado = 'cancelado', contenido = NULL, dueno = NULL, lease_hasta = 0 WHERE clave = ? AND estado IN ('pendiente','procesando')").run(clave).changes > 0;
+export function cancelar(clave, motivo = null) {
+  return base().prepare("UPDATE trabajos SET estado = 'cancelado', contenido = NULL, dueno = NULL, lease_hasta = 0, error = ? WHERE clave = ? AND estado IN ('pendiente','procesando')").run(motivo, clave).changes > 0;
 }
 export function estadisticas() {
   return base().prepare('SELECT tipo, estado, COUNT(*) AS cantidad FROM trabajos GROUP BY tipo, estado').all();

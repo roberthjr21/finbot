@@ -1,3 +1,4 @@
+import { admitirEntrada, procesarEntrada, recuperarEntradas } from './entradas.js';
 import { completarMedia } from './respuesta-media.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 
@@ -94,7 +95,7 @@ async function recibirPersistente(usuario, jid, msg) {
   let r;
   try {
     const contenido = codificarMensaje(msg);
-    r = trabajos.admitir({ clave: `entrada:${usuario}:${msg.key.id}`, usuario, tipo: 'entrada', contenido });
+    r = admitirEntrada({ usuario, mensajeId: msg.key.id, texto: textoDe(msg).trim(), contenido });
   }
   catch { r = { ok: false }; }
   if (!r.ok) {
@@ -779,6 +780,7 @@ async function enviarAUsuario(telefono, texto, opciones = {}) {
 }
 trabajadorEntrada = trabajos.crearTrabajador({
   tipo: 'entrada', mantenimiento: () => {
+    recuperarEntradas();
     const pendientes = db.basePersistente().prepare("SELECT id, usuario FROM trabajos WHERE tipo = 'entrada' AND estado = 'agotado' AND avisado = 0 LIMIT 20").all();
     for (const t of pendientes) {
       outbox.encolar({ clave: `agotado:${t.id}`, usuario: t.usuario, texto: '⚠️ No pude completar un mensaje tras los reintentos. Revisa /ultimos antes de reenviarlo; no se guardan cambios financieros parciales.' });
@@ -787,12 +789,14 @@ trabajadorEntrada = trabajos.crearTrabajador({
   }, concurrencia: entero('COLA_CONCURRENCIA', 4), habilitado: () => conectado && !cerrando,
   procesar: async (tarea) => {
     if (!admitido(tarea.usuario) || db.usuarioPorTelefono(tarea.usuario)?.estado !== 'activo') return;
+    return procesarEntrada(tarea, async () => {
     const msg = decodificarMensaje(trabajos.leerContenido(tarea.contenido, tarea));
     if (!esChatIndividual(msg.key.remoteJid)) throw new Error('Chat no permitido');
     const texto = textoDe(msg).trim();
     await identidadMensaje.run(tarea.usuario, async () => {
       if (texto) await atender(socketActivo, msg.key.remoteJid, msg, tarea.usuario, texto);
       else await responderSinTexto(socketActivo, msg.key.remoteJid, msg, tarea.usuario);
+    });
     });
   },
 });
