@@ -4,7 +4,7 @@
 
 Los mensajes ya autenticados se guardan en SQLite antes de procesarlos. Cada cuenta tiene orden FIFO de admisión, una sola tarea de entrada activa y acceso a cuatro trabajadores globales por defecto (`COLA_CONCURRENCIA`, entre 1 y 16). Una espera de IA de una cuenta no detiene el procesamiento asíncrono de las demás. Las transacciones SQLite de escritura siguen siendo breves y síncronas.
 
-El límite es de 5.000 pendientes por tipo y 500 por cuenta; cada carga puede ocupar como máximo 256 KiB antes de cifrar. Al no poder admitir un mensaje se intenta un aviso directo de saturación, se registra el fallo y **no se marca como procesado**. No existe memoria ni disco ilimitados. Si ese aviso tampoco llega, hace falta diagnóstico del operador y reenvío por el usuario: WhatsApp/Baileys no garantiza reentrega u orden de transporte. El FIFO garantizado es el de admisión autenticada, no una reconstrucción de mensajes nunca entregados.
+Las entradas de mensajes y sus continuaciones de análisis tienen cupos independientes: cada grupo admite hasta 5.000 trabajos activos globales y 500 por cuenta (máximo combinado de entrada: 10.000 globales y 1.000 por cuenta). Las salidas conservan su cupo total de 5.000 globales y 500 por cuenta. Así una entrada no ocupa el cupo que necesita su propio análisis; FIFO y la exclusión por lease siguen aplicándose a todas las entradas. Cada carga puede ocupar como máximo 256 KiB antes de cifrar. Al no poder admitir un mensaje se intenta un aviso directo de saturación, se registra el fallo y **no se marca como procesado**. No existe memoria ni disco ilimitados. Si ese aviso tampoco llega, hace falta diagnóstico del operador y reenvío por el usuario: WhatsApp/Baileys no garantiza reentrega u orden de transporte. El FIFO garantizado es el de admisión autenticada, no una reconstrucción de mensajes nunca entregados.
 
 Las reservas duran dos minutos y se renuevan cada treinta segundos. Tras una caída se recuperan las vencidas. La reserva se verifica al abrir una transacción financiera; una instancia antigua no puede confirmar cambios después de perderla. La marca del mensaje, el lote financiero y su respuesta principal se escriben juntos. Reintentar después de un COMMIT no duplica movimientos.
 
@@ -77,3 +77,12 @@ Las salidas conversacionales (`carril=conversacion`) respetan FIFO por cuenta, i
 Recordatorios, alertas, recurrentes y avisos de saturación son notificaciones independientes: pueden saltar una conversación en espera y no bloquean sus respuestas por horarios de silencio o cupos. Las salidas heredadas se consideran conservadoramente conversacionales. Los OTP del acceso web siguen siendo un canal inmediato independiente de la conversación. No se utilizan envíos directos para el aviso de saturación de entrada.
 
 Este orden es el de los intentos de envío locales y sus confirmaciones. WhatsApp no ofrece entrega externa exactamente una vez: una caída después de aceptar el envío y antes de confirmar SQLite puede repetirlo; un timeout no permite retirar un mensaje en tránsito, y WhatsApp o el dispositivo pueden mostrar mensajes tarde. Cada fila mantiene un `messageId` estable en los reintentos. No se promete FIFO absoluto en el dispositivo ni se cambian las garantías de idempotencia de las operaciones financieras.
+
+
+### Confirmación de operaciones temporales y recuperación de reservas
+
+En modo de prueba, la transacción persistente que reserva respuestas y análisis permanece abierta mientras se ejecuta y confirma la transacción temporal. Un fallo del callback o del COMMIT temporal revierte también esas reservas. Los SAVEPOINT temporales anidados tienen SAVEPOINT persistentes correspondientes: capturar un error interno no conserva una respuesta de éxito de la operación revertida.
+
+Esto ordena dos commits síncronos; no convierte dos bases SQLite en una transacción distribuida. La base temporal sigue siendo volátil. Un fallo entre su commit y el persistente no publica el éxito; tras reiniciar se aplican las reglas de sesión perdida. No se promete conservar datos de prueba tras reinicios.
+
+Una dependencia de análisis que llegó a hecho sin completar la respuesta también libera la reserva con aviso de fallo. Una reserva cuyo contenido no se puede descifrar o interpretar se cancela y elimina su cuerpo; el despacho continúa con las demás cuentas y respuestas.
