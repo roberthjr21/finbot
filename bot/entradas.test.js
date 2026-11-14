@@ -66,3 +66,30 @@ test('admisión saturada o repetida no altera el modo proyectado',()=>{
 test('cambiar los metadatos de modo invalida la carga cifrada',()=>{
   limpiar();admitir('/prueba on');const t=q.reclamar('entrada');assert.throws(()=>q.leerContenido(t.contenido,{...t,modo_operacion:'real'}),/descifrar/);
 });
+
+test('una entrada real conserva su base y etiqueta aunque exista otra sesión temporal',async()=>{
+  limpiar();admitir('/gasto 2500 comida');db.activarPrueba(A);
+  const antes=movimientos(A).length;
+  await paso(t=>{assert.equal(db.pruebaActiva(A),false);return gasto(t);});
+  assert.equal(movimientos(A).length,antes+1);
+});
+
+test('un SAVEPOINT fallido no confirma una marca ni un gasto parcial',async()=>{
+  limpiar();admitir('/prueba on');await paso();admitir('/gasto 2500 comida');
+  const antes=JSON.stringify(movimientos(A));
+  await paso(t=>db.enTransaccion(()=>{
+    assert.throws(()=>db.enTransaccion(()=>{gasto(t);db.marcarProcesado('savepoint-fallido');throw new Error('interrumpido');}),/interrumpido/);
+    assert.equal(db.yaProcesado('savepoint-fallido'),false);assert.equal(movimientos(A).length,0);
+    assert.throws(()=>db.conBasePrueba(B,()=>gasto({...t,usuario:B})),/otra cuenta/);
+  }));assert.equal(JSON.stringify(movimientos(A)),antes);
+});
+
+test('reutilizar un ID de fila no suprime avisos de otra entrada o cuenta',async()=>{
+  limpiar();let r=q.admitir({clave:'antigua-sin-modo',usuario:A,tipo:'entrada',contenido:'antigua'});
+  await e.procesarEntrada(q.reclamar('entrada'),()=>assert.fail('heredada'));
+  db.base().exec("UPDATE trabajos SET estado='hecho',contenido=NULL,expira=0");
+  q.retenerTerminales(); // la cola queda vacía y sus huellas de deduplicación sobreviven
+  r=q.admitir({clave:'nueva-sin-modo',usuario:B,tipo:'entrada',contenido:'nueva'});
+  await e.procesarEntrada(q.reclamar('entrada'),()=>assert.fail('heredada'));
+  assert.ok(r.ok);assert.equal(db.base().prepare("SELECT COUNT(*) n FROM trabajos WHERE tipo='salida' AND usuario=?").get(B).n,1);
+});

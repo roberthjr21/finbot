@@ -67,3 +67,12 @@ test('agotamiento deja fallo verificable en outbox y libera la respuesta reserva
   limpiar();preparar('agotado');const antes=fotoFinanciera(),t=q.reclamar('entrada');q.fallar(t,{maxIntentos:1});
   assert.equal(o.recuperarRespuestas(),1);assert.equal(salida().esperando,0);assert.equal(salida().error,'analisis_no_completado');assert.equal(fotoFinanciera(),antes);
 });
+
+test('análisis de prueba perdido deja un solo aviso y nunca consulta finanzas reales',async()=>{
+  limpiar();const antes=fotoFinanciera(),entradas=await import('./entradas.js');
+  db.activarPrueba(U,'sesion-del-arranque-anterior');
+  db.conModoCapturado(U,{modo_operacion:'prueba',sesion_prueba:'sesion-del-arranque-anterior'},()=>reservarAnalisis({usuario:U,mensajeId:'prueba-perdida',hoy:'2026-11-14'}));
+  db.desactivarPrueba(U);entradas.recuperarEntradas();o.recuperarRespuestas();
+  const filas=db.base().prepare("SELECT * FROM trabajos WHERE tipo='salida'").all();assert.equal(filas.length,1);assert.equal(filas[0].esperando,0);
+  assert.equal(db.base().prepare("SELECT estado FROM trabajos WHERE clase='analisis'").get().estado,'cancelado');assert.equal(fotoFinanciera(),antes);
+});

@@ -52,7 +52,10 @@ export function activarPrueba(usuario, sesion = modoEntrada.getStore()?.sesion_p
   sesionesPrueba.set(usuario, sesion);
   return true;
 }
-export function pruebaActiva(usuario) { return pruebas.has(usuario); }
+export function pruebaActiva(usuario) {
+  const capturado = modoEntrada.getStore();
+  return capturado?.usuario === usuario ? capturado.modo_operacion === 'prueba' : pruebas.has(usuario);
+}
 export function desactivarPrueba(usuario) {
   const temporal = pruebas.get(usuario);
   if (!temporal) return false;

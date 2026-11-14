@@ -759,9 +759,9 @@ trabajadorEntrada = trabajos.crearTrabajador({
   tipo: 'entrada', mantenimiento: () => {
     recuperarEntradas();
     outbox.recuperarRespuestas();
-    const pendientes = db.basePersistente().prepare("SELECT id, usuario FROM trabajos WHERE tipo = 'entrada' AND clase='mensaje' AND estado = 'agotado' AND avisado = 0 LIMIT 20").all();
+    const pendientes = db.basePersistente().prepare("SELECT id, clave, usuario FROM trabajos WHERE tipo = 'entrada' AND clase='mensaje' AND estado = 'agotado' AND avisado = 0 LIMIT 20").all();
     for (const t of pendientes) {
-      outbox.encolar({ clave: `agotado:${t.id}`, usuario: t.usuario, texto: '⚠️ No pude completar un mensaje tras los reintentos. Revisa /ultimos antes de reenviarlo; no se guardan cambios financieros parciales.' });
+      outbox.encolar({ clave: `agotado:${t.clave}`, usuario: t.usuario, texto: '⚠️ No pude completar un mensaje tras los reintentos. Revisa /ultimos antes de reenviarlo; no se guardan cambios financieros parciales.' });
       db.basePersistente().prepare('UPDATE trabajos SET avisado = 1 WHERE id = ?').run(t.id);
     }
   }, concurrencia: entero('COLA_CONCURRENCIA', 4), habilitado: () => conectado && !cerrando,

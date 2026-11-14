@@ -27,15 +27,15 @@ export function admitirEntrada({ usuario, mensajeId, texto = '', contenido, ...o
 
 export function cancelarEntrada(tarea, motivo) {
   return db.enTransaccionPersistente(() => {
-    outbox.encolar({ clave: `entrada-cancelada:${tarea.id}`, usuario: tarea.usuario,
-      texto: '🧪 Descarté un mensaje pendiente porque no puedo recuperar su modo o sus datos de prueba. No lo apliqué a tus finanzas reales. Usa /prueba on para iniciar pruebas nuevas o /prueba off para volver al modo normal.' });
+    if (tarea.clase !== 'analisis') outbox.encolar({ clave: `entrada-cancelada:${tarea.clave}`, usuario: tarea.usuario,
+      texto: '🧪 Descarté un mensaje pendiente porque no puedo recuperar su modo o sus datos de prueba. No ejecuté su recuperación. Revisa /ultimos antes de reenviarlo. Usa /prueba on para iniciar pruebas nuevas o /prueba off para volver al modo normal.' });
     db.basePersistente().prepare('UPDATE trabajos SET avisado=1 WHERE id=?').run(tarea.id);
     trabajos.cancelar(tarea.clave, motivo);
   });
 }
 
 export function recuperarEntradas() {
-  const filas = db.basePersistente().prepare("SELECT * FROM trabajos WHERE tipo='entrada' AND ((estado IN ('pendiente','procesando') AND (modo_operacion IS NULL OR modo_operacion='prueba')) OR (estado='cancelado' AND error='modo_heredado_desconocido' AND avisado=0)) LIMIT 500").all();
+  const filas = db.basePersistente().prepare("SELECT id,clave,usuario,modo_operacion,sesion_prueba,clase FROM trabajos WHERE tipo='entrada' AND ((estado IN ('pendiente','procesando') AND (modo_operacion IS NULL OR modo_operacion='prueba')) OR (estado='cancelado' AND error='modo_heredado_desconocido' AND avisado=0)) LIMIT 500").all();
   for (const t of filas) if (!t.modo_operacion || !perteneceAlProceso(t.sesion_prueba)) cancelarEntrada(t, t.modo_operacion ? 'sesion_prueba_perdida' : 'modo_heredado_desconocido');
 }
 
