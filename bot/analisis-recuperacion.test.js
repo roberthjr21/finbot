@@ -76,3 +76,51 @@ test('análisis de prueba perdido deja un solo aviso y nunca consulta finanzas r
   const filas=db.base().prepare("SELECT * FROM trabajos WHERE tipo='salida'").all();assert.equal(filas.length,1);assert.equal(filas[0].esperando,0);
   assert.equal(db.base().prepare("SELECT estado FROM trabajos WHERE clase='analisis'").get().estado,'cancelado');assert.equal(fotoFinanciera(),antes);
 });
+
+test('500 entradas activas reservan análisis sin perder movimientos ni consumir reintentos',async()=>{
+  limpiar();const e=await import('./entradas.js');
+  const total=()=>db.base().prepare('SELECT COUNT(*) n FROM movimientos WHERE usuario=?').get(U).n;
+  const antes=total();
+  for(let i=0;i<500;i++)assert.equal(e.admitirEntrada({usuario:U,mensajeId:`llena-${i}`,contenido:'{}'}).ok,true);
+  assert.equal(e.admitirEntrada({usuario:U,mensajeId:'exceso',contenido:'{}'}).ok,false);
+  for(let i=0;i<500;i++){
+    const t=q.reclamar('entrada');assert.ok(t);assert.equal(t.intentos,1);
+    await e.procesarEntrada(t,()=>db.enTransaccion(()=>{
+      const id=`${U}:llena-${i}`;
+      assert.equal(db.yaProcesado(id),false);
+      db.agregarMovimiento({usuario:U,tipo:'gasto',monto:100,categoria:'Otros',fecha:'2026-11-14',mensajeId:id});
+      reservarAnalisis({usuario:U,mensajeId:`llena-${i}`,hoy:'2026-11-14',usarIA:false});
+      db.marcarProcesado(id);
+    }));assert.equal(q.finalizar(t),true);
+  }
+  // El cupo de las continuaciones también permanece limitado a 500.
+  assert.throws(()=>reservarAnalisis({usuario:U,mensajeId:'analisis-exceso',hoy:'2026-11-14'}),/saturada/);
+  for(let i=0;i<500;i++){
+    const t=q.reclamar('entrada');assert.equal(t.clase,'analisis');assert.equal(t.intentos,1);
+    q.finalizar(t,{confirmar:await procesarAnalisis(t)});
+  }
+  const textos=[];await o.despachar({maximo:500,enviar:async(_,texto)=>textos.push(texto)});
+  assert.equal(textos.length,500);
+  assert.equal(total(),antes+500);
+  const guardados=db.base().prepare("SELECT COUNT(*) n, SUM(monto) monto FROM movimientos WHERE usuario=? AND mensaje_id LIKE ?").get(U,`${U}:llena-%`);
+  assert.equal(guardados.n,500);assert.equal(guardados.monto,50000);
+  assert.equal(db.base().prepare("SELECT COUNT(*) n FROM trabajos WHERE estado!='hecho' OR intentos!=1").get().n,0);
+  assert.equal(q.reclamar('entrada'),null);
+});
+
+test('cupo global y por cuenta limita cada grupo sin alterar FIFO ni leases',()=>{
+  limpiar();
+  const admitir=(clave,usuario,clase)=>q.admitir({clave,usuario,tipo:'entrada',clase,contenido:'{}',maximo:2,porUsuario:1});
+  const otro='573008001002';db.asegurarUsuario(otro);
+  assert.equal(admitir('limite-m1',U,'mensaje').ok,true);
+  assert.equal(admitir('limite-m2',U,'mensaje').ok,false);
+  assert.equal(admitir('limite-a1',U,'analisis').ok,true);
+  assert.equal(admitir('limite-a2',U,'analisis').ok,false);
+  assert.equal(admitir('limite-m3',otro,'mensaje').ok,true);
+  assert.equal(admitir('limite-a3',otro,'analisis').ok,true);
+  for(const clase of ['mensaje','analisis'])assert.equal(admitir(`exceso-${clase}`,'573008001003',clase).ok,false);
+  const t=q.reclamar('entrada');assert.equal(t.clave,'limite-m1');
+  const paralelo=q.reclamar('entrada');assert.equal(paralelo.usuario,otro);
+  assert.equal(q.reclamar('entrada'),null);
+  q.finalizar(t);assert.equal(q.reclamar('entrada').clave,'limite-a1');
+});

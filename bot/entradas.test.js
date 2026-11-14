@@ -93,3 +93,70 @@ test('reutilizar un ID de fila no suprime avisos de otra entrada o cuenta',async
   await e.procesarEntrada(q.reclamar('entrada'),()=>assert.fail('heredada'));
   assert.ok(r.ok);assert.equal(db.base().prepare("SELECT COUNT(*) n FROM trabajos WHERE tipo='salida' AND usuario=?").get(B).n,1);
 });
+
+test('eliminar cuenta borra y verifica marcadores de /prueba on y off',async()=>{
+  limpiar();const usuario='573001009999';db.asegurarUsuario(usuario);
+  const ids=['privacidad-on','privacidad-off'];
+  for(const [i,texto] of ['/prueba on','/prueba off'].entries()){
+    e.admitirEntrada({usuario,mensajeId:ids[i],texto,contenido:JSON.stringify({texto})});
+    await paso();
+  }
+  for(const id of ids)assert.equal(db.yaProcesado(`entrada:${usuario}:${id}`),true);
+  const p=await import('./privacidad-admin.js');
+  let plan=p.prepararEliminacion(db.base(),usuario);
+  assert.equal(plan.filas.procesados,2);
+  db.marcarProcesado(`entrada:${usuario}:nuevo`);
+  assert.throws(()=>p.eliminarCuenta(db.base(),{usuario,confirmacion:plan.confirmacion,botDetenido:true,autorizacionTitular:true}),/cambiaron/);
+  plan=p.prepararEliminacion(db.base(),usuario);
+  // La verificación final también detecta un marcador reintroducido por un trigger.
+  db.base().exec(`CREATE TRIGGER reintroducir_marca AFTER DELETE ON usuarios WHEN OLD.telefono='${usuario}' BEGIN INSERT INTO procesados(id) VALUES ('entrada:${usuario}:residual'); END`);
+  try{assert.throws(()=>p.eliminarCuenta(db.base(),{usuario,confirmacion:plan.confirmacion,botDetenido:true,autorizacionTitular:true}),/verificación/);}
+  finally{db.base().exec('DROP TRIGGER reintroducir_marca');}
+  assert.ok(db.usuarioPorTelefono(usuario));
+  p.eliminarCuenta(db.base(),{usuario,confirmacion:plan.confirmacion,botDetenido:true,autorizacionTitular:true});
+  assert.equal(db.base().prepare("SELECT COUNT(*) n FROM procesados WHERE id LIKE ?").get(`entrada:${usuario}:%`).n,0);
+});
+
+test('fallo después de reservar éxito revierte respuesta, análisis y operación temporal',async()=>{
+  limpiar();admitir('/prueba on');await paso();
+  db.base().exec('DELETE FROM trabajos');
+  admitir('/gasto 2500 comida');const t=q.reclamar('entrada');
+  const real=JSON.stringify(movimientos(A));
+  const o=await import('./outbox.js'),a=await import('./analisis-trabajos.js');
+  await assert.rejects(e.procesarEntrada(t,()=>db.enTransaccion(()=>{
+    gasto(t);
+    o.encolar({clave:'exito-revertido',usuario:A,texto:'Gasto registrado con éxito'});
+    a.reservarAnalisis({usuario:A,mensajeId:'analisis-revertido',hoy:'2026-11-14'});
+    assert.equal(db.basePersistente().prepare("SELECT COUNT(*) n FROM trabajos WHERE tipo='salida'").get().n,2);
+    // Restricción diferida: la reserva ya existe, pero COMMIT temporal falla.
+    db.base().exec("PRAGMA defer_foreign_keys=ON; CREATE TABLE fallo_commit (id INTEGER REFERENCES usuarios(id)); INSERT INTO fallo_commit VALUES (-999)");
+  })),/FOREIGN KEY/);
+  assert.equal(JSON.stringify(movimientos(A)),real);
+  db.conBasePrueba(A,()=>assert.equal(movimientos(A).length,0));
+  assert.equal(db.base().prepare("SELECT COUNT(*) n FROM trabajos WHERE tipo='salida' OR clase='analisis'").get().n,0);
+  const enviados=[];await o.despachar({enviar:async(_,texto)=>enviados.push(texto)});assert.deepEqual(enviados,[]);
+  // Reintentar confirma exactamente una operación y una respuesta.
+  await e.procesarEntrada(t,()=>db.enTransaccion(()=>{
+    gasto(t);o.encolar({clave:'exito-revertido',usuario:A,texto:'Gasto confirmado'});
+  }));
+  q.finalizar(t);
+  db.conBasePrueba(A,()=>assert.equal(movimientos(A).length,1));
+  await o.despachar({enviar:async(_,texto)=>enviados.push(texto)});
+  assert.deepEqual(enviados,['Gasto confirmado']);
+});
+
+test('SAVEPOINT temporal fallido revierte solo sus reservas persistentes',()=>{
+  limpiar();db.activarPrueba(A);
+  const o=db.basePersistente();
+  db.conBasePrueba(A,()=>db.enTransaccion(()=>{
+    assert.throws(()=>db.enTransaccion(()=>{
+      q.admitir({clave:'reserva-anidada-fallida',usuario:A,tipo:'salida',contenido:'{}'});
+      db.marcarProcesado('anidada-fallida');
+      throw new Error('abortar savepoint');
+    }),/abortar savepoint/);
+    assert.equal(db.yaProcesado('anidada-fallida'),false);
+    assert.equal(o.prepare("SELECT COUNT(*) n FROM trabajos WHERE clave='reserva-anidada-fallida'").get().n,0);
+    q.admitir({clave:'reserva-exterior-confirmada',usuario:A,tipo:'salida',contenido:'{}'});
+  }));
+  assert.equal(o.prepare("SELECT COUNT(*) n FROM trabajos WHERE clave='reserva-exterior-confirmada'").get().n,1);
+});

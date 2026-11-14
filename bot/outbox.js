@@ -68,9 +68,14 @@ export function recuperarRespuestas(ahora = Date.now()) {
   trabajos.purgarVencidos(ahora);
   return db.enTransaccionPersistente(() => {
     const filas = db.basePersistente().prepare(`SELECT s.* FROM trabajos s LEFT JOIN trabajos a ON a.id=s.dependencia
-      WHERE s.tipo='salida' AND s.estado='pendiente' AND s.esperando=1 AND (a.id IS NULL OR a.estado IN ('agotado','cancelado')) LIMIT 500`).all();
+      WHERE s.tipo='salida' AND s.estado='pendiente' AND s.esperando=1 AND (a.id IS NULL OR a.estado IN ('hecho','agotado','cancelado')) LIMIT 500`).all();
     for (const s of filas) {
-      const datos = JSON.parse(trabajos.leerContenido(s.contenido,s));
+      let datos;
+      try { datos = JSON.parse(trabajos.leerContenido(s.contenido,s)); }
+      catch {
+        trabajos.cancelar(s.clave, 'reserva_ilegible');
+        continue;
+      }
       trabajos.completarRespuesta(s.clave,JSON.stringify({ ...datos, texto:'⚠️ No pude completar el análisis pendiente. No volví a ejecutar movimientos financieros. Puedes pedir /analisis nuevamente.' }));
       db.basePersistente().prepare("UPDATE trabajos SET error='analisis_no_completado' WHERE id=?").run(s.id);
     }

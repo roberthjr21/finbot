@@ -58,7 +58,11 @@ export function admitir({ clave, usuario, tipo, contenido, ahora = Date.now(), v
   if (!['entrada','salida'].includes(tipo) || typeof contenido !== 'string' || Buffer.byteLength(contenido) > 256 * 1024) throw new Error('Trabajo inválido o demasiado grande');
   return db.enTransaccionPersistente(() => {
     if (base().prepare('SELECT id FROM trabajos WHERE clave = ?').get(clave) || base().prepare('SELECT 1 FROM trabajos_huellas WHERE huella = ?').get(huella(clave))) return { ok: true, duplicado: true };
-    const cantidad = (extra = '', params = []) => base().prepare(`SELECT COUNT(*) AS n FROM trabajos WHERE estado IN ('pendiente','procesando') AND tipo = ? ${extra}`).get(tipo, ...params).n;
+    // Los análisis tienen su propio cupo acotado: una entrada admitida nunca
+    // necesita liberar su propio lugar para reservar su continuación.
+    const grupo = tipo === 'entrada' && clase === 'analisis' ? 'analisis' : 'mensaje';
+    const cantidad = (extra = '', params = []) => base().prepare(`SELECT COUNT(*) AS n FROM trabajos WHERE estado IN ('pendiente','procesando') AND tipo = ?
+      AND (tipo != 'entrada' OR CASE WHEN clase='analisis' THEN 'analisis' ELSE 'mensaje' END = ?) ${extra}`).get(tipo, grupo, ...params).n;
     if (cantidad() >= maximo || cantidad('AND usuario = ?', [usuario]) >= porUsuario) return { ok: false, motivo: 'saturado' };
     const r = base().prepare('INSERT INTO trabajos (clave, usuario, tipo, contenido, disponible, creado, expira, modo_operacion, sesion_prueba, control_modo, clase, carril, esperando, dependencia) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .run(clave, usuario, tipo, cifrar(contenido, { tipo, usuario, clave, modo_operacion, sesion_prueba, control_modo }), ahora, ahora, ahora + vidaMs, modo_operacion, sesion_prueba, control_modo, clase, carril, esperando, dependencia);

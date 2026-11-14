@@ -72,3 +72,26 @@ test('varios usuarios se envían simultáneamente con concurrencia acotada y FIF
     assert.equal(db.base().prepare("SELECT COUNT(*) n FROM trabajos WHERE estado='hecho'").get().n,24);assert.equal(vistos.size,6);assert.ok(max>1&&max<=3);
   }finally{await w.detener();}
 });
+
+test('análisis omitido por cuenta inactiva no deja la conversación bloqueada',async()=>{
+  limpiar();const ahora=Date.now();
+  const a=q.admitir({clave:'analisis-inactivo',usuario:A,tipo:'entrada',clase:'analisis',contenido:'{}',modo_operacion:'real',ahora});
+  respuesta(A,'reserva',ahora,{esperando:1,dependencia:a.id});respuesta(A,'posterior',ahora);
+  db.base().prepare("UPDATE usuarios SET estado='bloqueado' WHERE telefono=?").run(A);
+  const t=q.reclamar('entrada',{ahora});q.finalizar(t,{ahora}); // early return sin callback
+  db.base().prepare("UPDATE usuarios SET estado='activo' WHERE telefono=?").run(A);
+  const textos=[];await o.despachar({ahora:new Date(ahora),enviar:async(_,texto)=>textos.push(texto)});
+  assert.equal(textos.length,2);assert.match(textos[0],/No pude completar el análisis/);assert.equal(textos[1],'posterior');
+});
+
+test('reserva ilegible se cancela y permite recuperar y enviar las demás',async()=>{
+  limpiar();const ahora=Date.now();
+  const r=respuesta(A,'ilegible',ahora,{esperando:1,dependencia:-1});
+  db.base().prepare("UPDATE trabajos SET contenido='enc:v1:invalido' WHERE id=?").run(r.id);
+  respuesta(A,'otra reserva',ahora,{esperando:1,dependencia:-2});respuesta(B,'otra cuenta',ahora);
+  const textos=[];await o.despachar({ahora:new Date(ahora),enviar:async(_,texto)=>textos.push(texto)});
+  const fila=db.base().prepare('SELECT estado,error,contenido FROM trabajos WHERE id=?').get(r.id);
+  assert.equal(fila.estado,'cancelado');assert.equal(fila.error,'reserva_ilegible');assert.equal(fila.contenido,null);
+  assert.equal(textos.length,2);assert.ok(textos.some(t=>t.includes('No pude completar el análisis')));assert.ok(textos.includes('otra cuenta'));
+  assert.equal(o.recuperarRespuestas(ahora),0);
+});
