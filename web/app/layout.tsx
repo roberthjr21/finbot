@@ -1,4 +1,4 @@
-import { Analytics } from '@vercel/analytics/next'
+import { Analitica } from '@/components/analitica'
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
 
@@ -41,7 +41,7 @@ export default function RootLayout({
     <html lang="es">
       <body className="antialiased">
         {children}
-        {process.env.NODE_ENV === 'production' && <Analytics />}
+        {process.env.NODE_ENV === 'production' && process.env.VERCEL === '1' && <Analitica />}
       </body>
     </html>
   )

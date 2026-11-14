@@ -35,6 +35,7 @@ export function DashboardShell({
 }: Readonly<{ children: ReactNode; pagina: string; salud?: Resultado<{ ok: true }>; consultado?: string }>) {
   return (
     <div className="app-shell">
+      <a className="saltar-contenido" href="#contenido-principal">Saltar al contenido</a>
       {/* Menú móvil sin JavaScript: la casilla abre y cierra la barra lateral */}
       <input id="menu-movil" className="menu-toggle" type="checkbox" aria-label="Abrir o cerrar el menú de navegación" />
       <label htmlFor="menu-movil" className="menu-scrim" aria-hidden="true" />
@@ -68,7 +69,7 @@ export function DashboardShell({
           </div>
         </div>
       </aside>
-      <main className="main-content">
+      <main id="contenido-principal" tabIndex={-1} className="main-content">
         <header className="topbar">
           <label htmlFor="menu-movil" className="menu-button" aria-label="Abrir menú"><Menu size={20} /></label>
           <div className="breadcrumb"><span>FinBot</span><span>/</span><strong>{pagina}</strong></div>
@@ -90,8 +91,8 @@ export function EstadoConexion({ motivo, seccion }: { motivo: 'configuracion' | 
       <h2>{seccion ? `${seccion}: ` : ''}{configurando ? 'Falta conectar el bot' : 'No se pudieron cargar los datos'}</h2>
       <p className="subheading">
         {configurando
-          ? 'Configura BOT_API_URL y BOT_API_TOKEN en el entorno del servidor web.'
-          : 'Comprueba que el bot esté activo y que la URL y el token del API sean correctos.'}
+          ? 'El servicio aún no está disponible. Contacta con el administrador.'
+          : 'No pudimos conectar con el bot. Vuelve a intentarlo en un momento.'}
       </p>
     </section>
   )

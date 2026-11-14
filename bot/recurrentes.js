@@ -1,3 +1,4 @@
+import { encolar as notificar } from './outbox.js';
 import * as db from './db.js';
 import { fechaBogota, pesos, sumarDias, valida } from './fechas.js';
 import { validarMovimiento } from './movimientos.js';
@@ -89,7 +90,7 @@ export const eliminar = (usuario, id) =>
 
 // Registra los movimientos que ya tocan (también los atrasados por un apagado del bot).
 // Devuelve lo ejecutado para avisar al usuario.
-export function ejecutarPendientes({ hoy = fechaBogota() } = {}) {
+export function ejecutarPendientes({ hoy = fechaBogota(), ahora = Date.now() } = {}) {
   const hechos = [];
   const activos = db.base().prepare("SELECT usuario, id FROM recurrentes WHERE estado = 'activo' AND proxima <= ? ORDER BY id").all(hoy);
   for (const { usuario, id } of activos) {
@@ -106,6 +107,7 @@ export function ejecutarPendientes({ hoy = fechaBogota() } = {}) {
           });
           db.base().prepare('UPDATE recurrentes_ejecuciones SET movimiento_id = ? WHERE recurrente_id = ? AND fecha = ?').run(movimientoId, id, proxima);
           db.registrarAuditoria({ usuario: r.usuario, accion: 'ejecutar_recurrente', entidad: 'movimiento', entidadId: movimientoId, origen: 'sistema', detalle: { recurrente: id, fecha: proxima } });
+          notificar({ ahora, clave: `aviso:rec:${id}:${proxima}`, usuario: r.usuario, texto: `🔁 Registré tu ${r.tipo} recurrente: ${pesos(r.monto)} en ${r.categoria} · ${proxima}` });
           hechos.push({ usuario: r.usuario, id, fecha: proxima, tipo: r.tipo, monto: r.monto, categoria: r.categoria, descripcion: r.descripcion });
         }
         proxima = siguienteFecha(proxima, r.frecuencia, r.dia_mes);

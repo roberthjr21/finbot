@@ -72,8 +72,30 @@ Las rutas POST comparan `Origin` con `WEB_ORIGEN` completo, no con un `X-Forward
 
 Ejecuta `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build` y `pnpm test:integration`. La última prueba inicia Next.js compilado y la API real sobre SQLite temporal, simula OTP mediante IPC y comprueba sesiones, CRUD, datos ajenos, idempotencia, CSRF y caída del bot. No utiliza WhatsApp ni una base real. No es una prueba visual de navegador; comprueba el contrato HTTP de ambas aplicaciones.
 
-`pnpm audit` incluye desarrollo y puede devolver código 1 por el aviso moderado de minimatch documentado en `../docs/AUDITORIA.md`. `pnpm audit --prod` verifica el árbol de ejecución por separado. La CLI shadcn se retiró del árbol; su CSS se conserva con licencia MIT en `styles/`.
+`pnpm audit` incluye desarrollo; el aviso previo de minimatch se mitiga mediante un override específico validado, descrito en `../docs/AUDITORIA_FASE_2.md`. `pnpm audit --prod` verifica el árbol de ejecución por separado. La CLI shadcn se retiró del árbol; su CSS se conserva con licencia MIT en `styles/`.
 
 El gráfico de seis meses usa una petición a `/api/resumenes` en lugar de seis a `/api/resumen`. El dashboard pasa de 13 a 8 consultas HTTP al bot (38,5 % menos) sin compartir caché financiera entre usuarios. Los gráficos siguen siendo SVG renderizado en servidor.
 
 Si las escrituras devuelven 403, comprueba `WEB_ORIGEN`, esquema y puerto. Si el bot devuelve 401, revisa primero que ambos tokens coincidan; una sesión vencida conduce a login. Un cierre de sesión con 503 requiere reintentar cuando el bot vuelva. Nunca interpretes la eliminación local de una cookie como prueba de revocación remota.
+
+## Segunda etapa: verificación y preview
+
+El reemplazo de una sesión ahora se confirma en una sola transacción del bot junto al OTP. Actualizar primero el backend, para que admita `tokenAnterior`. Se mantiene la revocación confirmada al cerrar sesión y se rechazan orígenes de producción HTTP externos o con rutas/credenciales ambiguas.
+
+Sin una IP confiable continúa el cupo agregado, ahora 120 códigos y 240 verificaciones por hora por defecto, junto con las cuotas por teléfono. Es una alternativa conservadora, no una identificación real del visitante; configurar correctamente Vercel o el gateway para evitar que todos compartan cupo.
+
+Pruebas nuevas de interfaz con Chromium sobre Next.js compilado y SQLite temporal:
+
+```sh
+pnpm exec playwright install chromium
+pnpm build
+pnpm test:e2e
+```
+
+CI instala también las bibliotecas del navegador (`--with-deps`). Las pruebas comprueban foco OTP, teclado, móvil, doble envío y CRUD. Para una inspección manual aislada: `node tests/preview-local.mjs`; el proceso informa una URL loopback y crea una cuenta de prueba con credenciales ficticias, nunca WhatsApp real. Cerrarlo con SIGTERM/SIGINT limpia sus archivos temporales. No exponerlo a internet.
+
+La dependencia de desarrollo Playwright permite conservar estas regresiones en CI. El override de minimatch se limita a typescript-estree y se valida contra 132 resultados de la versión anterior, además de lint, tipos, build y pruebas que verifican que los analizadores rechacen errores reales. No se actualiza ESLint de versión mayor ni se cambia el runtime de Next.js en esta etapa.
+
+La analítica solo se monta automáticamente en Vercel y elimina queries, fragmentos e IDs de movimientos de las URLs. Se conservan el diseño, gráficos SVG y consulta mensual por lotes de la etapa anterior.
+
+[Preparación de preview y protección de main](../docs/VERCEL_Y_PROTECCION_MAIN.md). No se ha desplegado una preview ni configurado reglas del repositorio.

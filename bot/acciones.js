@@ -32,6 +32,7 @@ function resumenBorrado(c) {
   if (c.recurrentes) partes.push(`${c.recurrentes} recurrente${c.recurrentes === 1 ? '' : 's'}`);
   if (c.metas) partes.push(`${c.metas} meta${c.metas === 1 ? '' : 's'} de ahorro`);
   if (c.alertas) partes.push(`${c.alertas} registro${c.alertas === 1 ? '' : 's'} de alertas`);
+  if (c.notificaciones) partes.push(`${c.notificaciones} notificaciones pendientes`);
   if (c.contexto) partes.push('contexto de conversación');
   return partes.join(', ');
 }
@@ -336,6 +337,7 @@ function ejecutarAtomico(accion, { usuario, hoy, mensajeId, indice, efectos }) {
         `⚠️ Vas a borrar PARA SIEMPRE ${NOMBRE_ALCANCE[alcance]}:`,
         resumenBorrado(cantidades),
         '',
+        'Se conservan la cuenta, la auditoría y los respaldos; no es una eliminación definitiva de datos personales (/privacidad).',
         'Esto no se puede deshacer. Para confirmar escribe /borrar confirmar (tienes 2 minutos). Para cancelar: /borrar cancelar.',
       ].join('\n');
     }

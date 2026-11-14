@@ -158,6 +158,72 @@ CREATE TRIGGER IF NOT EXISTS auditoria_borrado_prestamos AFTER DELETE ON prestam
         VALUES (OLD.usuario, 'eliminar_registro', 'prestamo', OLD.id, 'sistema', json_object('id', OLD.id, 'usuario', OLD.usuario, 'persona', OLD.persona, 'tipo', OLD.tipo, 'monto', OLD.monto, 'fecha', OLD.fecha, 'movimiento_id', OLD.movimiento_id, 'descripcion', OLD.descripcion));
       END;
   ` },
+  { version: 6, nombre: 'cola persistente, outbox y privacidad minimizada', sql: `
+      CREATE INDEX idx_codigos_expira ON codigos_login(expira);
+      CREATE INDEX idx_sesiones_expira ON sesiones_web(expira);
+      CREATE INDEX idx_sesiones_revocadas ON sesiones_web(revocada) WHERE revocada = 1;
+      ALTER TABLE recordatorios ADD COLUMN revision INTEGER NOT NULL DEFAULT 1;
+      CREATE TABLE trabajos (
+        id INTEGER PRIMARY KEY,
+        clave TEXT NOT NULL UNIQUE,
+        usuario TEXT NOT NULL,
+        tipo TEXT NOT NULL CHECK (tipo IN ('entrada','salida')),
+        contenido TEXT,
+        estado TEXT NOT NULL DEFAULT 'pendiente' CHECK (estado IN ('pendiente','procesando','hecho','agotado','cancelado')),
+        intentos INTEGER NOT NULL DEFAULT 0,
+        disponible INTEGER NOT NULL,
+        creado INTEGER NOT NULL,
+        expira INTEGER NOT NULL,
+        lease_hasta INTEGER NOT NULL DEFAULT 0,
+        dueno TEXT,
+        ultimo_inicio INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        avisado INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX idx_trabajos_listos ON trabajos(tipo, estado, disponible, id);
+      CREATE INDEX idx_trabajos_usuario ON trabajos(usuario, tipo, id);
+      CREATE UNIQUE INDEX idx_trabajos_exclusion ON trabajos(usuario, tipo) WHERE estado = 'procesando';
+      CREATE TABLE alertas_reservadas (
+        usuario TEXT NOT NULL, clave TEXT NOT NULL, trabajo_id INTEGER NOT NULL, dia TEXT NOT NULL,
+        PRIMARY KEY (usuario, clave)
+      );
+      CREATE TABLE privacidad_solicitudes (
+        usuario TEXT PRIMARY KEY,
+        nonce_hash TEXT NOT NULL,
+        huella TEXT NOT NULL,
+        expira INTEGER NOT NULL
+      );
+
+      DROP TRIGGER IF EXISTS auditoria_borrado_movimientos;
+      CREATE TRIGGER auditoria_borrado_movimientos AFTER DELETE ON movimientos
+      BEGIN
+        INSERT INTO auditoria (usuario, accion, entidad, entidad_id, origen, detalle)
+        VALUES (OLD.usuario, 'eliminar_registro', 'movimiento', OLD.id, 'sistema',
+          json_object('id', OLD.id, 'tipo', OLD.tipo, 'monto', OLD.monto, 'fecha', OLD.fecha));
+      END;
+
+      DROP TRIGGER IF EXISTS auditoria_borrado_deudas;
+      CREATE TRIGGER auditoria_borrado_deudas AFTER DELETE ON deudas
+      BEGIN
+        INSERT INTO auditoria (usuario, accion, entidad, entidad_id, origen, detalle)
+        VALUES (OLD.usuario, 'eliminar_registro', 'deuda', OLD.id, 'sistema',
+          json_object('id', OLD.id, 'tipo', OLD.tipo, 'monto', OLD.monto, 'fecha', OLD.fecha));
+      END;
+
+      DROP TRIGGER IF EXISTS auditoria_borrado_prestamos;
+      CREATE TRIGGER auditoria_borrado_prestamos AFTER DELETE ON prestamos
+      BEGIN
+        INSERT INTO auditoria (usuario, accion, entidad, entidad_id, origen, detalle)
+        VALUES (OLD.usuario, 'eliminar_registro', 'prestamo', OLD.id, 'sistema',
+          json_object('id', OLD.id, 'tipo', OLD.tipo, 'monto', OLD.monto, 'fecha', OLD.fecha));
+      END;
+
+  ` },
+  { version: 7, nombre: 'retención de trabajos con deduplicación minimizada', sql: `
+    CREATE TABLE trabajos_huellas (huella TEXT PRIMARY KEY, usuario_hash TEXT NOT NULL) WITHOUT ROWID;
+    CREATE INDEX idx_trabajos_huellas_usuario ON trabajos_huellas(usuario_hash);
+    CREATE INDEX idx_trabajos_retencion ON trabajos(estado, expira);
+  ` },
 ];
 
 const hayDatos = (db) =>

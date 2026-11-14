@@ -218,13 +218,16 @@ test('rotación de API acepta temporalmente la clave anterior y la rechaza al re
 });
 
 test('producción rechaza claves cortas, ausentes o compartidas entre API y códigos', () => {
-  const previo = { NODE_ENV: process.env.NODE_ENV, API_TOKEN: process.env.API_TOKEN, SECRETO_SESION: process.env.SECRETO_SESION };
+  const previo = { NODE_ENV: process.env.NODE_ENV, API_TOKEN: process.env.API_TOKEN, SECRETO_SESION: process.env.SECRETO_SESION, API_TOKEN_ANTERIOR: process.env.API_TOKEN_ANTERIOR };
   try {
     process.env.NODE_ENV = 'production';
     assert.throws(() => crearServidorApi(), /Producción requiere/);
     process.env.API_TOKEN = 'a'.repeat(40); process.env.SECRETO_SESION = process.env.API_TOKEN;
     assert.throws(() => crearServidorApi(), /independientes/);
     process.env.SECRETO_SESION = 'b'.repeat(40);
+    process.env.API_TOKEN_ANTERIOR = 'corta';
+    assert.throws(() => crearServidorApi(), /clave anterior/);
+    delete process.env.API_TOKEN_ANTERIOR;
     const seguro = crearServidorApi(); assert.ok(seguro); seguro.close();
   } finally {
     for (const [k, v] of Object.entries(previo)) if (v === undefined) delete process.env[k]; else process.env[k] = v;

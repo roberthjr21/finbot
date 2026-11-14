@@ -288,3 +288,7 @@ a { color: inherit; }
 
 .menu-toggle:focus-visible ~ .main-content .menu-button { outline: 3px solid var(--info); outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
+
+.saltar-contenido { position: fixed; top: 8px; left: 8px; z-index: 100; padding: 12px; background: var(--panel); color: var(--text); transform: translateY(-160%); }
+.saltar-contenido:focus { transform: none; }
+button:disabled { cursor: wait; opacity: .65; }

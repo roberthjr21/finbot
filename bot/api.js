@@ -31,6 +31,10 @@ export function crearServidorApi({ enviar } = {}) {
     throw new Error('Producción requiere API_TOKEN y SECRETO_SESION independientes de al menos 32 caracteres.');
   }
 
+  if (process.env.NODE_ENV === 'production' && process.env.API_TOKEN_ANTERIOR && (process.env.API_TOKEN_ANTERIOR.trim().length < 32 || process.env.API_TOKEN_ANTERIOR.trim() === process.env.SECRETO_SESION)) {
+    throw new Error('La clave anterior de API también debe ser fuerte e independiente.');
+  }
+
   const limiteEscrituras = crearLimitador({ ambito: 'api:escrituras', max: entero('MAX_ESCRITURAS_MINUTO', 30), ventanaMs: 60_000 });
   const puerto = Number(process.env.API_PUERTO ?? 3001);
   const host = process.env.API_HOST ?? '127.0.0.1';
@@ -128,7 +132,7 @@ export function crearServidorApi({ enviar } = {}) {
         return;
       }
       case '/interno/verificar': {
-        const r = acceso.verificarCodigo({ telefono: cuerpo.telefono, codigo: cuerpo.codigo, ip });
+        const r = acceso.verificarCodigo({ telefono: cuerpo.telefono, codigo: cuerpo.codigo, tokenAnterior: cuerpo.tokenAnterior, ip });
         responder(res, r.ok ? 200 : 401, r.ok ? r : { ok: false }, cabeceras);
         return;
       }
