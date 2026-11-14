@@ -107,7 +107,7 @@ export function ejecutarPendientes({ hoy = fechaBogota(), ahora = Date.now() } =
           });
           db.base().prepare('UPDATE recurrentes_ejecuciones SET movimiento_id = ? WHERE recurrente_id = ? AND fecha = ?').run(movimientoId, id, proxima);
           db.registrarAuditoria({ usuario: r.usuario, accion: 'ejecutar_recurrente', entidad: 'movimiento', entidadId: movimientoId, origen: 'sistema', detalle: { recurrente: id, fecha: proxima } });
-          notificar({ ahora, clave: `aviso:rec:${id}:${proxima}`, usuario: r.usuario, texto: `🔁 Registré tu ${r.tipo} recurrente: ${pesos(r.monto)} en ${r.categoria} · ${proxima}` });
+          notificar({ ahora, evento: { tipo:'recurrente' }, clave: `aviso:rec:${id}:${proxima}`, usuario: r.usuario, texto: `🔁 Registré tu ${r.tipo} recurrente: ${pesos(r.monto)} en ${r.categoria} · ${proxima}` });
           hechos.push({ usuario: r.usuario, id, fecha: proxima, tipo: r.tipo, monto: r.monto, categoria: r.categoria, descripcion: r.descripcion });
         }
         proxima = siguienteFecha(proxima, r.frecuencia, r.dia_mes);

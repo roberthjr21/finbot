@@ -100,8 +100,8 @@ async function recibirPersistente(usuario, jid, msg) {
   catch { r = { ok: false }; }
   if (!r.ok) {
     console.error('Mensaje no admitido: cola saturada o almacenamiento no disponible');
-    // Fuera de la cola llena: aviso explícito, sin marcar el mensaje como procesado.
-    try { await enviarAUsuario(usuario, '⏳ No pude guardar tu mensaje porque estoy saturado. Revisa /ultimos y vuelve a enviarlo en unos minutos.'); }
+    // Aviso separado de la conversación, sin adelantar respuestas mediante un envío directo.
+    try { outbox.encolar({ clave: `saturacion:${usuario}:${msg.key.id}`, usuario, jid, evento: { tipo:'saturacion' }, texto:'⏳ No pude guardar tu mensaje porque estoy saturado. Revisa /ultimos y vuelve a enviarlo en unos minutos.' }); trabajadorSalida?.despertar(); }
     catch { console.error('Tampoco se pudo entregar el aviso de saturación'); }
     return;
   }

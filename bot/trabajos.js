@@ -88,7 +88,9 @@ export function reclamar(tipo, { ahora = Date.now(), leaseMs = 120000, dueno = r
     b.prepare("UPDATE trabajos SET estado = 'pendiente', dueno = NULL, lease_hasta = 0 WHERE tipo = ? AND estado = 'procesando' AND lease_hasta <= ?").run(tipo, ahora);
     const fila = b.prepare(`SELECT t.* FROM trabajos t
       WHERE t.tipo = ? AND t.estado = 'pendiente' AND t.disponible <= ? AND t.esperando = 0
-        AND (t.tipo = 'salida' OR NOT EXISTS (SELECT 1 FROM trabajos p WHERE p.usuario = t.usuario AND p.tipo = t.tipo AND p.id < t.id AND p.estado IN ('pendiente','procesando')))
+        AND NOT EXISTS (SELECT 1 FROM trabajos p WHERE p.usuario=t.usuario AND p.tipo=t.tipo
+          AND p.id<t.id AND p.estado IN ('pendiente','procesando')
+          AND (t.tipo='entrada' OR (t.carril='conversacion' AND p.carril='conversacion')))
         AND NOT EXISTS (SELECT 1 FROM trabajos p WHERE p.usuario = t.usuario AND p.tipo = t.tipo AND p.estado = 'procesando')
       ORDER BY COALESCE((SELECT MAX(p.ultimo_inicio) FROM trabajos p WHERE p.usuario = t.usuario AND p.tipo = t.tipo), 0), t.id LIMIT 1`).get(tipo, ahora);
     if (!fila) return null;
