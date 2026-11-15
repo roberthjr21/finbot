@@ -31,6 +31,7 @@ import * as outbox from './outbox.js';
 import { codificarMensaje, decodificarMensaje, esSaludoInicial } from './codec-mensajes.js';
 import * as acceso from './acceso.js';
 import { programarRespaldos } from './respaldos.js';
+import { protegerArbolPrivado } from './seguridad-archivos.js';
 import * as contexto from './contexto.js';
 import { iniciarProgramador } from './programador.js';
 import * as media from './media.js';
@@ -498,6 +499,9 @@ function reconectar(motivo) {
 
 async function iniciar() {
   if (cerrando) return;
+  // Protege credenciales existentes antes de que Baileys las lea y garantiza
+  // permisos privados a los nuevos archivos creados con umask 077.
+  protegerArbolPrivado('auth');
   const { state, saveCreds } =
     await useMultiFileAuthState('auth');
 

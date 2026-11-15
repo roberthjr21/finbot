@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { crearRespaldo, verificarRespaldo } from './db-admin.js';
 import { createHash } from 'node:crypto';
+import { protegerArbolPrivado } from './seguridad-archivos.js';
 
 // Respaldos periódicos de la base. Cada copia se crea con VACUUM INTO y se verifica
 // (integridad y tablas) antes de quedar en su lugar. Se conservan las últimas N.
@@ -32,6 +33,8 @@ export function listarRespaldos(carpeta, archivo) {
 export function respaldarAhora(archivoDB, { ahora = new Date(), conservar = configuracionRespaldos().conservar, confirmarRotacion = process.env.RESPALDO_ROTAR === '1' } = {}) {
   if (archivoDB === ':memory:') return null;
   const carpeta = carpetaRespaldos(archivoDB);
+  // El directorio de respaldos es privado, también si ya existía antes.
+  protegerArbolPrivado(carpeta);
   const nombre = `${prefijo(archivoDB)}${ahora.toISOString().slice(0, 19).replace(/:/g, '-')}Z.db`;
   const destino = path.join(carpeta, nombre);
   if (fs.existsSync(destino)) { verificarRespaldo(destino); return destino; }
@@ -65,6 +68,7 @@ export function programarRespaldos(archivoDB, { registro = console } = {}) {
     }
   };
   const carpeta = carpetaRespaldos(archivoDB);
+  protegerArbolPrivado(carpeta);
   const ultimo = listarRespaldos(carpeta, archivoDB).at(-1);
   let edad = Infinity;
   if (ultimo) {
