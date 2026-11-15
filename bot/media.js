@@ -55,6 +55,10 @@ const ESQUEMA_RECIBO = {
     fecha: { type: 'string', description: 'Fecha del recibo AAAA-MM-DD, si se ve. Si no, vacío.' },
     total: { type: 'integer', description: 'Total pagado en pesos colombianos, entero (sin puntos ni decimales).' },
     categoria: { type: 'string', enum: CATEGORIAS.filter((c) => !CATEGORIAS_RESERVADAS.includes(c)) },
+    hora: { type: 'string', description: 'Hora HH:MM del comprobante si se ve, sin inventarla.' },
+    referencia: { type: 'string', description: 'Referencia del comprobante, si es visible.' },
+    cuenta_origen: { type: 'string', description: 'Entidad o persona de origen, solo si es visible.' },
+    cuenta_destino: { type: 'string', description: 'Entidad o persona de destino, solo si es visible.' },
     tipo_operacion: { type: 'string', enum: ['compra', 'envio', 'recarga', 'transferencia_propia', 'ingreso', 'desconocida'], description: 'Clasifica según el comprobante. "Recarga realizada" desde Bancolombia u otra cuenta es recarga, NO compra ni gasto. "Envío realizado" es envio. Nunca infieras que recarga es un gasto.' },
   },
   required: ['es_recibo'],
@@ -102,22 +106,35 @@ export function validarRecibo(lectura, hoy = fechaBogota()) {
   return { ok: true, item: v.valor, comercio, fechaLeida: fecha === lectura.fecha };
 }
 
+const limpioRecibo = (v, maximo=60) => String(v ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0,maximo);
+const HORA_RECIBO = /^([01]\d|2[0-3]):[0-5]\d$/;
+// Las coincidencias ambiguas nunca se usan para rechazar un movimiento legítimo.
 export function contextoRecarga(lectura, hoy = fechaBogota()) {
   if (!lectura?.es_recibo || !['recarga','transferencia_propia','ingreso'].includes(lectura.tipo_operacion)) return null;
   const monto=Number(lectura.total);
   if (!Number.isInteger(monto) || !montoValido(monto)) return null;
   const fecha=valida(lectura.fecha) && lectura.fecha<=hoy ? lectura.fecha : hoy;
-  return {monto,fecha,origen:String(lectura.comercio??'').slice(0,60),etapa:'origen'};
+  return {
+    monto, fecha, etapa:'origen',
+    origen:limpioRecibo(lectura.cuenta_origen || lectura.comercio),
+    destino:limpioRecibo(lectura.cuenta_destino),
+    referencia:limpioRecibo(lectura.referencia,40) || undefined,
+    hora:HORA_RECIBO.test(String(lectura.hora??'')) ? lectura.hora : undefined,
+  };
 }
 export function textoInicioRecarga(recarga) {
   return '🧾 Detecté una recarga de ' + pesos(recarga.monto) +
     (recarga.origen ? ' desde ' + recarga.origen : '') +
+    (recarga.destino ? ' hacia ' + recarga.destino : '') +
+    (recarga.referencia ? ' (ref. ' + recarga.referencia + ')' : '') +
     '. No registré ningún gasto. ¿El dinero vino de otra cuenta tuya o te lo envió otra persona?';
 }
 export function continuarRecarga(p,texto) {
   if (!p || !Number.isInteger(p.monto)) return null;
   const t=String(texto??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
   if (t.startsWith('/')) return null;
+  // Una consulta o un gasto nuevo no debe consumirse como respuesta al flujo pendiente.
+  if (String(texto).includes('?') || /^(cuanto|cuanta|cuantos|cuantas|que|quien|como|cual|cuando|dime|muestrame|saldo|resumen|gaste|compre|pague|abone|preste|ayer gaste|hoy gaste)\b/.test(t)) return null;
   if (/\b(mi otra cuenta|otra cuenta mia|cuenta propia|de mi cuenta)\b/.test(t))
     return {fin:true,texto:'🔁 Transferencia propia de '+pesos(p.monto)+'. No registré un gasto ni un ingreso.'};
   if (p.etapa==='confirmar') {

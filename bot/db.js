@@ -219,7 +219,13 @@ export function marcarProcesado(id) {
 // requiere un SAVEPOINT, no un segundo BEGIN IMMEDIATE; el BEGIN externo se conserva
 // para reservar el escritor con anticipación y mantener la seguridad de concurrencia.
 let siguienteSavepoint = 0;
-export function enTransaccion(tarea) {
+export function enTransaccion(tarea, coordinada = false) {
+  const temporal = baseTemporal.getStore();
+  // La reserva persistente queda abierta hasta confirmar la operación temporal.
+  // Cualquier fallo previo al commit temporal revierte también respuestas y análisis.
+  if (temporal && !coordinada) {
+    return enTransaccionPersistente(() => baseTemporal.run(temporal, () => enTransaccion(tarea, true)));
+  }
   const anidada = db.isTransaction;
   const nombre = anidada ? `finbot_anidada_${++siguienteSavepoint}` : null;
   db.exec(anidada ? `SAVEPOINT ${nombre}` : 'BEGIN IMMEDIATE');

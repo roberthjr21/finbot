@@ -10,21 +10,49 @@ import { entero } from './limites.js';
 //  • Cada persona tiene su propia fila; nada se comparte entre cuentas.
 
 const ttlMs = () => entero('CONTEXTO_MINUTOS', 30) * 60_000;
+const ttlConfirmacionMs = () => entero('CONFIRMACION_MINUTOS', 10) * 60_000;
+const CAMPOS_BREVES = ['pendiente', 'recarga'];
 
-export function obtener(usuario, ahora = Date.now()) {
+function obtenerInterno(usuario, ahora = Date.now()) {
   const fila = db.base().prepare('SELECT datos, actualizado FROM contexto WHERE usuario = ?').get(usuario);
   if (!fila) return {};
   if (ahora - fila.actualizado > ttlMs()) {
     borrar(usuario);
     return {};
   }
-  try { return JSON.parse(fila.datos); } catch { return {}; }
+  try {
+    const datos = JSON.parse(fila.datos);
+    if (!datos || typeof datos !== 'object' || Array.isArray(datos)) return {};
+    for (const clave of CAMPOS_BREVES) {
+      if (!datos[clave]) continue;
+      const creado = Number(datos[clave].creado ?? fila.actualizado);
+      if (!Number.isFinite(creado) || ahora - creado >= ttlConfirmacionMs()) delete datos[clave];
+    }
+    return datos;
+  } catch { return {}; }
+}
+
+// Mantiene las marcas de vencimiento en el almacenamiento, sin cambiar la forma pública del contexto.
+export function obtener(usuario, ahora = Date.now()) {
+  const datos = obtenerInterno(usuario, ahora);
+  for (const clave of CAMPOS_BREVES) {
+    if (datos[clave] && typeof datos[clave] === 'object' && !Array.isArray(datos[clave])) {
+      const { creado: _interno, ...publico } = datos[clave];
+      datos[clave] = publico;
+    }
+  }
+  return datos;
 }
 
 // Mezcla los campos nuevos con lo vigente; un campo en null se elimina
 export function guardar(usuario, parcial, ahora = Date.now()) {
-  const actual = obtener(usuario, ahora);
+  const actual = obtenerInterno(usuario, ahora);
   const nuevo = { ...actual, ...parcial };
+  for (const clave of CAMPOS_BREVES) {
+    if (parcial[clave] && typeof parcial[clave] === 'object' && !Array.isArray(parcial[clave])) {
+      nuevo[clave] = { ...parcial[clave], creado: ahora };
+    }
+  }
   for (const k of Object.keys(nuevo)) if (nuevo[k] === null) delete nuevo[k];
   db.base()
     .prepare('INSERT INTO contexto (usuario, datos, actualizado) VALUES (?, ?, ?) ON CONFLICT (usuario) DO UPDATE SET datos = excluded.datos, actualizado = excluded.actualizado')

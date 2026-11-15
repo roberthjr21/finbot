@@ -257,19 +257,69 @@ const tiempoIntento = () => numeroEnv('TIEMPO_IA_MS', 15_000) || 15_000;
 const pausa = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const esTemporal = (estado) => estado === 429 || estado >= 500;
 
-// Hace la petición con hasta `intentos` intentos. Solo reintenta los errores temporales
-// (429, 5xx, tiempo agotado o fallo de red), esperando un poco más cada vez.
-// Devuelve la última respuesta, o lanza el último error si nunca hubo respuesta.
+export class ErrorIA extends Error {
+  constructor(mensaje, { codigo = 'otro', estado, reintentarEnMs } = {}) {
+    super(mensaje);
+    this.name = 'ErrorIA';
+    this.codigo = codigo;
+    this.estado = estado;
+    this.reintentarEnMs = reintentarEnMs;
+  }
+}
+const codigoDeEstado = (n) => n === 429 ? 'cuota' : n >= 500 ? 'saturado' : [401, 403].includes(n) ? 'clave' : 'otro';
+const enfriamientos = new Map();
+export const reiniciarEnfriamientos = () => enfriamientos.clear();
+export const enfriamientoRestante = (clave) => Math.max(0, (enfriamientos.get(clave) ?? 0) - Date.now());
+export const estadoEnfriamiento = () => Math.max(0, ...[...enfriamientos.values()].map(hasta => hasta - Date.now()));
+const MAX_ENFRIAMIENTO_MS = 15 * 60_000;
+
+function esperaDe429(res) {
+  const valor = res.headers?.get?.('retry-after')?.trim();
+  if (valor) {
+    const segundos = Number(valor);
+    if (Number.isFinite(segundos) && segundos >= 0) return Math.min(segundos * 1000, MAX_ENFRIAMIENTO_MS);
+    const fecha = Date.parse(valor);
+    if (Number.isFinite(fecha)) return Math.min(Math.max(0, fecha - Date.now()), MAX_ENFRIAMIENTO_MS);
+  }
+  return Math.min(numeroEnv('ENFRIAMIENTO_429_S', 60) * 1000, MAX_ENFRIAMIENTO_MS);
+}
+
+export function mensajeErrorIA(error, { sufijo = 'Puedes seguir usando comandos como /gasto 20000 comida almuerzo.' } = {}) {
+  const codigo = error?.codigo ?? codigoDeEstado(error?.estado);
+  switch (codigo) {
+    case 'cuota': return `⏳ La IA llegó a su límite temporal. Intenta nuevamente más tarde. ${sufijo}`;
+    case 'saturado': return `😕 El proveedor de IA está saturado. Intenta otra vez en un momento. ${sufijo}`;
+    case 'tiempo': return `😕 La IA no respondió a tiempo. ${sufijo}`;
+    case 'clave': return `⚠️ La IA no está correctamente configurada; el administrador debe revisar su acceso. ${sufijo}`;
+    default: return `😕 No pude consultar la IA ahora mismo. ${sufijo}`;
+  }
+}
+
+// El enfriamiento por URL reduce intentos redundantes durante cuotas 429.
+// Retry-After acepta segundos o fecha HTTP; nunca se registra el cuerpo del error.
 async function solicitarConReintento(url, opciones, { intentos = 2 } = {}) {
+  const restante = enfriamientoRestante(url);
+  if (restante > 0) throw new ErrorIA('Cuota del proveedor temporalmente limitada', { codigo: 'cuota', estado: 429, reintentarEnMs: restante });
   for (let intento = 1; ; intento++) {
     let res;
     try {
       res = await fetch(url, { ...opciones, redirect: 'error', signal: AbortSignal.timeout(tiempoIntento()) });
     } catch (e) {
-      const error = ['TimeoutError', 'AbortError'].includes(e?.name) ? new Error('La IA no respondió a tiempo') : e;
+      const temporal = ['TimeoutError', 'AbortError'].includes(e?.name);
+      const error = new ErrorIA(temporal ? 'La IA no respondió a tiempo' : 'Fallo de conexión con la IA', { codigo: temporal ? 'tiempo' : 'saturado' });
       if (intento >= intentos) throw error;
       await pausa(numeroEnv('ESPERA_REINTENTO_MS', 1500) * intento);
       continue;
+    }
+    if (res.status === 429) {
+      const espera = esperaDe429(res);
+      if (espera <= numeroEnv('ESPERA_429_MAX_MS', 5000) && intento < intentos) {
+        await res.body?.cancel().catch(() => {});
+        await pausa(espera);
+        continue;
+      }
+      enfriamientos.set(url, Date.now() + espera);
+      return res;
     }
     if (!esTemporal(res.status) || intento >= intentos) return res;
     await res.body?.cancel().catch(() => {});
@@ -279,7 +329,10 @@ async function solicitarConReintento(url, opciones, { intentos = 2 } = {}) {
 
 async function leerError(res) {
   await res.body?.cancel().catch(() => {});
-  return new Error(`API ${res.status}: el proveedor rechazó la petición`);
+  return new ErrorIA(`API ${res.status}: el proveedor rechazó la petición`, {
+    codigo: codigoDeEstado(res.status), estado: res.status,
+    reintentarEnMs: res.status === 429 ? estadoEnfriamiento() : undefined,
+  });
 }
 
 // Modelos de Gemini en orden de preferencia: el principal y, después, el de respaldo.

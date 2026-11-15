@@ -15,7 +15,7 @@ function filas(b, usuario) {
   resultado.trabajos_huellas = b.prepare('SELECT * FROM trabajos_huellas WHERE usuario_hash = ? ORDER BY huella').all(hash(usuario));
   resultado.usuarios = b.prepare('SELECT * FROM usuarios WHERE telefono = ?').all(usuario);
   for (const t of ['sesiones_web','codigos_login']) resultado[t] = b.prepare(`SELECT * FROM ${t} WHERE usuario_id IN (SELECT id FROM usuarios WHERE telefono = ?) ORDER BY id`).all(usuario);
-  resultado.procesados = b.prepare("SELECT * FROM procesados WHERE id LIKE ? OR id LIKE ? OR id LIKE ? ORDER BY id").all(`${usuario}:%`, `media:${usuario}:%`, `web:${usuario}:%`);
+  resultado.procesados = b.prepare("SELECT * FROM procesados WHERE id LIKE ? OR id LIKE ? OR id LIKE ? OR id LIKE ? ORDER BY id").all(`${usuario}:%`, `media:${usuario}:%`, `web:${usuario}:%`, `entrada:${usuario}:%`);
   resultado.recurrentes_ejecuciones = b.prepare('SELECT * FROM recurrentes_ejecuciones WHERE recurrente_id IN (SELECT id FROM recurrentes WHERE usuario = ?) ORDER BY recurrente_id, fecha').all(usuario);
   return resultado;
 }
@@ -51,7 +51,7 @@ export function eliminarCuenta(b, { usuario, confirmacion, botDetenido = false, 
     for (const t of TABLAS.filter(t => t !== 'auditoria')) b.prepare(`DELETE FROM ${t} WHERE usuario = ?`).run(usuario);
     b.prepare('DELETE FROM trabajos_huellas WHERE usuario_hash = ?').run(hash(usuario));
     b.prepare('DELETE FROM auditoria WHERE usuario = ?').run(usuario);
-    b.prepare("DELETE FROM procesados WHERE id LIKE ? OR id LIKE ? OR id LIKE ?").run(`${usuario}:%`, `media:${usuario}:%`, `web:${usuario}:%`);
+    b.prepare("DELETE FROM procesados WHERE id LIKE ? OR id LIKE ? OR id LIKE ? OR id LIKE ?").run(`${usuario}:%`, `media:${usuario}:%`, `web:${usuario}:%`, `entrada:${usuario}:%`);
     b.prepare('DELETE FROM limites_intentos WHERE clave = ?').run(hash(usuario));
     b.prepare('DELETE FROM privacidad_solicitudes WHERE usuario = ?').run(usuario);
     b.prepare('DELETE FROM usuarios WHERE telefono = ?').run(usuario);
