@@ -69,6 +69,7 @@ export const AYUDA = [
   '/presupuesto comida 300000',
   '/presupuestos',
   '/analisis',
+  '/diagnostico   (estado de IA, mensajes pendientes y modo de prueba)',
   '/saldo   (con /saldo detalle ves las cuentas)',
   '/guia   (guía paso a paso con ejemplos)',
   '/prueba on | off | estado   (modo temporal: no modifica tus finanzas reales)',

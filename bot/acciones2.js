@@ -4,6 +4,7 @@ import * as recurrentes from './recurrentes.js';
 import * as metas from './metas.js';
 import * as alertas from './alertas.js';
 import * as contexto from './contexto.js';
+import { textoDiagnostico } from './diagnostico.js';
 import { editarMovimiento, obtenerMovimiento } from './db.js';
 import { fechaDeTexto, pesos, valida } from './fechas.js';
 import { validarMovimiento } from './movimientos.js';
@@ -150,6 +151,9 @@ export function ejecutarFase2(accion, ctx, ejecutarBase) {
       const r = alertas.configurar(usuario, datos);
       return r.ok ? `✅ Listo.\n\n${alertas.textoConfiguracion(usuario)}` : aviso(r);
     }
+
+    case 'ver_diagnostico':
+      return textoDiagnostico(usuario);
 
     // ---- Contexto: confirmaciones y correcciones ----
     case 'confirmar_pendiente': {
