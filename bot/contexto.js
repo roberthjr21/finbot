@@ -13,7 +13,7 @@ const ttlMs = () => entero('CONTEXTO_MINUTOS', 30) * 60_000;
 const ttlConfirmacionMs = () => entero('CONFIRMACION_MINUTOS', 10) * 60_000;
 const CAMPOS_BREVES = ['pendiente', 'recarga'];
 
-export function obtener(usuario, ahora = Date.now()) {
+function obtenerInterno(usuario, ahora = Date.now()) {
   const fila = db.base().prepare('SELECT datos, actualizado FROM contexto WHERE usuario = ?').get(usuario);
   if (!fila) return {};
   if (ahora - fila.actualizado > ttlMs()) {
@@ -32,9 +32,21 @@ export function obtener(usuario, ahora = Date.now()) {
   } catch { return {}; }
 }
 
+// Mantiene las marcas de vencimiento en el almacenamiento, sin cambiar la forma pública del contexto.
+export function obtener(usuario, ahora = Date.now()) {
+  const datos = obtenerInterno(usuario, ahora);
+  for (const clave of CAMPOS_BREVES) {
+    if (datos[clave] && typeof datos[clave] === 'object' && !Array.isArray(datos[clave])) {
+      const { creado: _interno, ...publico } = datos[clave];
+      datos[clave] = publico;
+    }
+  }
+  return datos;
+}
+
 // Mezcla los campos nuevos con lo vigente; un campo en null se elimina
 export function guardar(usuario, parcial, ahora = Date.now()) {
-  const actual = obtener(usuario, ahora);
+  const actual = obtenerInterno(usuario, ahora);
   const nuevo = { ...actual, ...parcial };
   for (const clave of CAMPOS_BREVES) {
     if (parcial[clave] && typeof parcial[clave] === 'object' && !Array.isArray(parcial[clave])) {
