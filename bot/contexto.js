@@ -10,32 +10,49 @@ import { entero } from './limites.js';
 //  • Cada persona tiene su propia fila; nada se comparte entre cuentas.
 
 const ttlMs = () => entero('CONTEXTO_MINUTOS', 30) * 60_000;
-
-// Una confirmación pendiente (voz, recibo, recarga) vence antes que el resto del contexto:
-// CONFIRMACION_MINUTOS (10 por defecto). Así un "sí" suelto de mucho después no registra nada viejo.
 const ttlConfirmacionMs = () => entero('CONFIRMACION_MINUTOS', 10) * 60_000;
-const CON_VENCIMIENTO = ['pendiente', 'recarga'];
+const CAMPOS_BREVES = ['pendiente', 'recarga'];
 
-export function obtener(usuario, ahora = Date.now()) {
+function obtenerInterno(usuario, ahora = Date.now()) {
   const fila = db.base().prepare('SELECT datos, actualizado FROM contexto WHERE usuario = ?').get(usuario);
   if (!fila) return {};
   if (ahora - fila.actualizado > ttlMs()) {
     borrar(usuario);
     return {};
   }
-  let datos;
-  try { datos = JSON.parse(fila.datos); } catch { return {}; }
-  for (const k of CON_VENCIMIENTO) {
-    if (datos[k] && ahora - (datos[k].creado ?? 0) > ttlConfirmacionMs()) delete datos[k];
+  try {
+    const datos = JSON.parse(fila.datos);
+    if (!datos || typeof datos !== 'object' || Array.isArray(datos)) return {};
+    for (const clave of CAMPOS_BREVES) {
+      if (!datos[clave]) continue;
+      const creado = Number(datos[clave].creado ?? fila.actualizado);
+      if (!Number.isFinite(creado) || ahora - creado >= ttlConfirmacionMs()) delete datos[clave];
+    }
+    return datos;
+  } catch { return {}; }
+}
+
+// Mantiene las marcas de vencimiento en el almacenamiento, sin cambiar la forma pública del contexto.
+export function obtener(usuario, ahora = Date.now()) {
+  const datos = obtenerInterno(usuario, ahora);
+  for (const clave of CAMPOS_BREVES) {
+    if (datos[clave] && typeof datos[clave] === 'object' && !Array.isArray(datos[clave])) {
+      const { creado: _interno, ...publico } = datos[clave];
+      datos[clave] = publico;
+    }
   }
   return datos;
 }
 
 // Mezcla los campos nuevos con lo vigente; un campo en null se elimina
 export function guardar(usuario, parcial, ahora = Date.now()) {
-  const actual = obtener(usuario, ahora);
+  const actual = obtenerInterno(usuario, ahora);
   const nuevo = { ...actual, ...parcial };
-  for (const k of CON_VENCIMIENTO) if (nuevo[k] && typeof nuevo[k] === 'object' && !nuevo[k].creado) nuevo[k] = { ...nuevo[k], creado: ahora };
+  for (const clave of CAMPOS_BREVES) {
+    if (parcial[clave] && typeof parcial[clave] === 'object' && !Array.isArray(parcial[clave])) {
+      nuevo[clave] = { ...parcial[clave], creado: ahora };
+    }
+  }
   for (const k of Object.keys(nuevo)) if (nuevo[k] === null) delete nuevo[k];
   db.base()
     .prepare('INSERT INTO contexto (usuario, datos, actualizado) VALUES (?, ?, ?) ON CONFLICT (usuario) DO UPDATE SET datos = excluded.datos, actualizado = excluded.actualizado')
@@ -47,16 +64,6 @@ export const borrar = (usuario) => db.base().prepare('DELETE FROM contexto WHERE
 // Limpieza general de contextos vencidos (la llama el programador)
 export const purgar = (ahora = Date.now()) =>
   db.base().prepare('DELETE FROM contexto WHERE actualizado < ?').run(ahora - ttlMs()).changes;
-
-// ¿El mensaje parece una pregunta o una orden NUEVA (y no la respuesta a lo que está pendiente)?
-// Sirve para que una confirmación o una recarga a medias no se "coman" consultas o gastos nuevos.
-const INTERROGATIVA = /^(cuanto|cuanta|cuantos|cuantas|que|quien|quienes|como|cual|cuales|donde|cuando|por que|para que|en que|a quien|de quien|hay|tengo|puedes|podrias|me puedes|dime|muestrame|dame|ver|mi saldo|saldo)\b/;
-const ORDEN = /\b(gaste|gastaste|compre|pague|abone|preste|debo|recargue|borra|borrar|elimina|eliminar|cambia|ponme|fijar|fija|recuerdame|recordatorio|resumen|ultimos|presupuesto|meta|aportar|analiza)\b/;
-export function pareceOtroTema(texto) {
-  const t = normalizar(texto).replace(/[¡!]+/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!t) return false;
-  return String(texto).includes('?') || INTERROGATIVA.test(t) || ORDEN.test(t);
-}
 
 // ---- Confirmaciones ("sí" / "no") ----
 const SI = new Set(['si', 'sii', 'dale', 'ok', 'okay', 'listo', 'confirmo', 'confirmar', 'correcto', 'claro', 'yes', 'registralo', 'registrala', 'guardalo']);

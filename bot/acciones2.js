@@ -4,10 +4,10 @@ import * as recurrentes from './recurrentes.js';
 import * as metas from './metas.js';
 import * as alertas from './alertas.js';
 import * as contexto from './contexto.js';
+import { textoDiagnostico } from './diagnostico.js';
 import { editarMovimiento, obtenerMovimiento } from './db.js';
 import { fechaDeTexto, pesos, valida } from './fechas.js';
 import { validarMovimiento } from './movimientos.js';
-import { textoDiagnostico } from './diagnostico.js';
 
 // Acciones de la fase 2. Devuelve undefined si la acción no es de este módulo.
 // "ejecutarBase" es la función de acciones.js (para reutilizar el registro de movimientos).
@@ -164,11 +164,6 @@ export function ejecutarFase2(accion, ctx, ejecutarBase) {
         const marca = `media:${usuario}:${c.pendiente.hash}`;
         if (db.yaProcesado(marca)) return '⚠️ Esa imagen ya la registraste antes; no la dupliqué.';
         db.marcarProcesado(marca);
-      }
-      if (c.pendiente.huella) {
-        const marcaComprobante = `comprobante:${usuario}:${c.pendiente.huella}`;
-        if (db.yaProcesado(marcaComprobante)) return '⚠️ Ese comprobante ya lo registraste antes (otra captura del mismo pago); no lo dupliqué.';
-        db.marcarProcesado(marcaComprobante);
       }
       const textos = (c.pendiente.items ?? []).map((item, i) => ejecutarBase({ nombre: 'registrar_movimiento', datos: item }, { ...ctx, indice: indice * 100 + i })).filter(Boolean);
       return textos.join('\n');

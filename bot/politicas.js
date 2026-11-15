@@ -19,3 +19,6 @@ export function acotarAcciones(acciones, maximo = 5) {
   }
   return resultado;
 }
+
+// Opt-in estricto: valores ausentes, erróneos o vacíos no abren el registro.
+export const registroAbierto = (entorno = process.env) => entorno.REGISTRO_ABIERTO === '1';

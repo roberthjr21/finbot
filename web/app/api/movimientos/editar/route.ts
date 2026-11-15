@@ -1,9 +1,10 @@
+import { leerFormularioSeguro } from '@/lib/seguridad-http'
 import { origenValido } from '@/lib/auth-servidor'
 import { escribirBot, leerMonto, texto, volverA } from '@/lib/escritura'
 
 export async function POST(request: Request) {
   if (!origenValido(request)) return new Response(null, { status: 403 })
-  const datos = await request.formData().catch(() => null)
+  const datos = await leerFormularioSeguro(request).catch(() => null)
   const id = Number(datos?.get('id'))
   if (!datos || !Number.isSafeInteger(id) || id <= 0) return volverA('/movimientos', { e: 'Movimiento no válido.' })
   const volver = `/movimientos/${id}`

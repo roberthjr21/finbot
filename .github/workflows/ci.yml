@@ -4,10 +4,22 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
+  seguridad:
+    name: Secretos y artefactos privados
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/verificar-secretos.py
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
   bot:
     name: Bot (pruebas)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: bot
@@ -18,12 +30,16 @@ jobs:
           node-version-file: bot/.nvmrc
           cache: npm
           cache-dependency-path: bot/package-lock.json
+      - run: node scripts/verificar-bot.mjs
+        working-directory: .
       - run: npm ci
       - run: npm test
+      - run: npm audit --audit-level=moderate
 
   web:
     name: Web (typecheck, lint y build)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: web
@@ -38,6 +54,13 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
+      - run: pnpm test
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm build
+      - run: pnpm test:integration
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - run: pnpm audit --prod --audit-level=moderate
+      # Override acotado de minimatch validado por pruebas de compatibilidad.
+      - run: pnpm audit --audit-level=moderate

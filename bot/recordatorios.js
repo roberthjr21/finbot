@@ -37,7 +37,7 @@ function validar({ texto, monto, vence, hora }, { parcial = false, hoy = fechaBo
   return { ok: true, valor };
 }
 
-const CAMPOS = 'id, texto, monto, vence, hora, estado, enviado_en';
+const CAMPOS = 'id, texto, monto, vence, hora, estado, enviado_en, revision';
 
 export function crear({ usuario, texto, monto, vence, hora, mensajeId = null }, opciones) {
   const v = validar({ texto, monto, vence, hora }, opciones);
@@ -67,7 +67,7 @@ export function editar(usuario, id, cambios, opciones) {
   // Si cambia la fecha u hora, vuelve a quedar pendiente para avisar de nuevo
   const reabrir = campos.includes('vence') || campos.includes('hora');
   db.base()
-    .prepare(`UPDATE recordatorios SET ${campos.map((c) => `${c} = ?`).join(', ')}${reabrir ? ", estado = 'pendiente', enviado_en = NULL" : ''} WHERE usuario = ? AND id = ?`)
+    .prepare(`UPDATE recordatorios SET revision = revision + 1, ${campos.map((c) => `${c} = ?`).join(', ')}${reabrir ? ", estado = 'pendiente', enviado_en = NULL" : ''} WHERE usuario = ? AND id = ?`)
     .run(...campos.map((c) => v.valor[c]), usuario, id);
   return { ok: true };
 }

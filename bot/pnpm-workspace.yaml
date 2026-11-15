@@ -1,0 +1,5 @@
+# CI y producción usan npm ci. Política equivalente si se usa pnpm:
+# Baileys comprueba la versión de Node; protobufjs solo avisa del esquema de versiones.
+allowBuilds:
+  '@whiskeysockets/baileys': true
+  protobufjs: true

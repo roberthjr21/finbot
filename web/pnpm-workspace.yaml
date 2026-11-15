@@ -3,3 +3,7 @@ pmOnFail: ignore
 minimumReleaseAgeExclude:
   - '@next/*'
   - next
+
+# Excepción acotada validada por compatibilidad (ver tests/minimatch.test.mjs).
+overrides:
+  '@typescript-eslint/typescript-estree>minimatch': '11.0.1'

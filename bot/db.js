@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizar } from './categorias.js';
@@ -7,6 +8,11 @@ import { migrar } from './migraciones.js';
 const archivoDB = process.env.DB_ARCHIVO ?? 'finanzas.db';
 const dbReal = new DatabaseSync(archivoDB);
 const baseTemporal = new AsyncLocalStorage();
+const controlTransaccion = new AsyncLocalStorage();
+export const conControlTransaccion = (control, tarea) => controlTransaccion.run(control, tarea);
+// Cola y outbox siempre usan la conexión real, incluso en /prueba.
+export const basePersistente = () => dbReal;
+export const enTransaccionPersistente = (tarea) => baseTemporal.run(undefined, () => enTransaccion(tarea));
 // Las consultas de un mensaje de prueba van a su propia base SQLite en memoria.
 // La web, el programador y los demás usuarios siempre ven la base real.
 const db = new Proxy(dbReal, {
@@ -17,6 +23,14 @@ const db = new Proxy(dbReal, {
   },
 });
 const pruebas = new Map();
+const sesionesPrueba = new Map();
+const modoEntrada = new AsyncLocalStorage();
+export const sesionPrueba = usuario => sesionesPrueba.get(usuario);
+export const modoCapturado = () => modoEntrada.getStore();
+export function conModoCapturado(usuario, metadatos, tarea) {
+  if (!['real', 'prueba'].includes(metadatos.modo_operacion)) throw new Error('Modo de entrada desconocido');
+  return modoEntrada.run({ usuario, ...metadatos }, () => conBasePrueba(usuario, tarea));
+}
 
 function crearBasePrueba() {
   const temporal = new DatabaseSync(':memory:');
@@ -32,21 +46,31 @@ function crearBasePrueba() {
   }
 }
 
-export function activarPrueba(usuario) {
+export function activarPrueba(usuario, sesion = modoEntrada.getStore()?.sesion_prueba ?? randomUUID()) {
+  if (pruebas.has(usuario) && sesionesPrueba.get(usuario) !== sesion) desactivarPrueba(usuario);
   if (!pruebas.has(usuario)) pruebas.set(usuario, crearBasePrueba());
+  sesionesPrueba.set(usuario, sesion);
   return true;
 }
-export function pruebaActiva(usuario) { return pruebas.has(usuario); }
+export function pruebaActiva(usuario) {
+  const capturado = modoEntrada.getStore();
+  return capturado?.usuario === usuario ? capturado.modo_operacion === 'prueba' : pruebas.has(usuario);
+}
 export function desactivarPrueba(usuario) {
   const temporal = pruebas.get(usuario);
   if (!temporal) return false;
   pruebas.delete(usuario);
+  sesionesPrueba.delete(usuario);
   temporal.close();
   return true;
 }
-// Ejecuta algo contra la base REAL aunque estemos dentro de una prueba (solo lectura de metadatos)
-export const enBaseReal = (tarea) => baseTemporal.exit(tarea);
 export function conBasePrueba(usuario, tarea) {
+  const capturado = modoEntrada.getStore();
+  if (capturado) {
+    if (capturado.usuario !== usuario) throw new Error('La entrada pertenece a otra cuenta');
+    if (capturado.modo_operacion === 'real') return baseTemporal.run(undefined, tarea);
+    if (!pruebas.has(usuario) || sesionesPrueba.get(usuario) !== capturado.sesion_prueba) throw new Error('Sesión de prueba perdida');
+  }
   const temporal = pruebas.get(usuario);
   return temporal ? baseTemporal.run(temporal, tarea) : tarea();
 }
@@ -174,7 +198,7 @@ db.exec(`
 `);
 
 // Migraciones versionadas (tablas nuevas, siempre aditivas y con copia verificada antes)
-migrar(db, archivoDB);
+// Se ejecuta al final, después de completar todas las tablas del esquema base.
 
 // --- Mensajes ya atendidos (para no registrar dos veces lo mismo) ---
 export function yaProcesado(id) {
@@ -195,12 +219,20 @@ export function marcarProcesado(id) {
 // requiere un SAVEPOINT, no un segundo BEGIN IMMEDIATE; el BEGIN externo se conserva
 // para reservar el escritor con anticipación y mantener la seguridad de concurrencia.
 let siguienteSavepoint = 0;
-export function enTransaccion(tarea) {
+export function enTransaccion(tarea, coordinada = false) {
+  const temporal = baseTemporal.getStore();
+  // La reserva persistente queda abierta hasta confirmar la operación temporal.
+  // Cualquier fallo previo al commit temporal revierte también respuestas y análisis.
+  if (temporal && !coordinada) {
+    return enTransaccionPersistente(() => baseTemporal.run(temporal, () => enTransaccion(tarea, true)));
+  }
   const anidada = db.isTransaction;
   const nombre = anidada ? `finbot_anidada_${++siguienteSavepoint}` : null;
   db.exec(anidada ? `SAVEPOINT ${nombre}` : 'BEGIN IMMEDIATE');
   try {
+    controlTransaccion.getStore()?.();
     const resultado = tarea();
+    if (resultado && typeof resultado.then === 'function') throw new Error('Una transacción SQLite debe ser síncrona');
     db.exec(anidada ? `RELEASE SAVEPOINT ${nombre}` : 'COMMIT');
     return resultado;
   } catch (error) {
@@ -269,6 +301,11 @@ export function ultimoMovimientoBorrable(usuario) {
 }
 
 export function borrarMovimiento(usuario, id) {
+  return enTransaccion(() => borrarMovimientoAtomico(usuario, id));
+}
+
+function borrarMovimientoAtomico(usuario, id) {
+  if (prestamoProtegido(usuario, id)) return null;
   const fila = db.prepare(
     `SELECT id, tipo, monto, categoria, descripcion, fecha
        FROM movimientos WHERE usuario = ? AND id = ?
@@ -294,9 +331,16 @@ export function obtenerMovimiento(usuario, id) {
   ).get(usuario, id) ?? null;
 }
 
+// Nuevas auditorías conservan cifras y trazabilidad, sin duplicar nombres o texto libre.
+function minimizarAuditoria(valor) {
+  if (!valor || typeof valor !== 'object') return valor;
+  const permitidas = new Set(['id', 'tipo', 'monto', 'categoria', 'fecha', 'antes', 'despues', 'indice', 'recurrente']);
+  return Object.fromEntries(Object.entries(valor).filter(([k]) => permitidas.has(k)).map(([k,v]) => [k, minimizarAuditoria(v)]));
+}
+
 export function registrarAuditoria({ usuario, accion, entidad, entidadId = null, origen = 'bot', detalle = null }) {
   db.prepare('INSERT INTO auditoria (usuario, accion, entidad, entidad_id, origen, detalle) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(usuario, accion, entidad, entidadId, origen, detalle ? JSON.stringify(detalle).slice(0, 2000) : null);
+    .run(usuario, accion, entidad, entidadId, origen, detalle ? JSON.stringify(minimizarAuditoria(detalle)).slice(0, 2000) : null);
 }
 
 export function listarAuditoria(usuario, limite = 50) {
@@ -308,8 +352,9 @@ export function listarAuditoria(usuario, limite = 50) {
 export function editarMovimiento(usuario, id, cambios, origen = 'web') {
   return enTransaccion(() => {
     const antes = obtenerMovimiento(usuario, id);
-    if (!antes) return null;
+    if (!antes || antes.ligado) return null;
     const campos = ['tipo', 'monto', 'categoria', 'descripcion', 'fecha'].filter((c) => cambios[c] !== undefined);
+    if (!campos.length) return null;
     db.prepare(`UPDATE movimientos SET ${campos.map((c) => `${c} = ?`).join(', ')} WHERE usuario = ? AND id = ?`)
       .run(...campos.map((c) => cambios[c]), usuario, id);
     const despues = obtenerMovimiento(usuario, id);
@@ -322,7 +367,7 @@ export function editarMovimiento(usuario, id, cambios, origen = 'web') {
 export function eliminarMovimiento(usuario, id, origen = 'web') {
   return enTransaccion(() => {
     const fila = obtenerMovimiento(usuario, id);
-    if (!fila) return null;
+    if (!fila || fila.ligado) return null;
     db.prepare('DELETE FROM movimientos WHERE usuario = ? AND id = ?').run(usuario, id);
     registrarAuditoria({ usuario, accion: 'eliminar', entidad: 'movimiento', entidadId: id, origen, detalle: { ...fila, ligado: undefined } });
     return fila;
@@ -504,10 +549,8 @@ export function yaProcesadoDe(usuario, id) {
 }
 
 // --- Uso diario (límites) ---
-// El uso diario SIEMPRE se cuenta en la base real, también en modo de prueba (si no, bastaría
-// activar y desactivar /prueba para saltarse los límites de mensajes e IA).
 export function sumarUso(usuario, dia, { mensajes = 0, ia = 0 } = {}) {
-  dbReal.prepare(
+  db.prepare(
     `INSERT INTO uso_diario (usuario, dia, mensajes, ia) VALUES (?, ?, ?, ?)
      ON CONFLICT (usuario, dia) DO UPDATE SET mensajes = mensajes + excluded.mensajes, ia = ia + excluded.ia`
   ).run(usuario, dia, mensajes, ia);
@@ -515,12 +558,16 @@ export function sumarUso(usuario, dia, { mensajes = 0, ia = 0 } = {}) {
 }
 
 export function usoDelDia(usuario, dia) {
-  const fila = dbReal.prepare('SELECT mensajes, ia FROM uso_diario WHERE usuario = ? AND dia = ?').get(usuario, dia);
+  const fila = db.prepare('SELECT mensajes, ia FROM uso_diario WHERE usuario = ? AND dia = ?').get(usuario, dia);
   return { mensajes: fila?.mensajes ?? 0, ia: fila?.ia ?? 0 };
 }
 
 // --- Acceso web: códigos y sesiones (ahora = segundos desde 1970) ---
-export function guardarCodigo({ usuarioId, hash, ahora, expira }) {
+export function guardarCodigo(datos) {
+  return enTransaccion(() => guardarCodigoAtomico(datos));
+}
+
+function guardarCodigoAtomico({ usuarioId, hash, ahora, expira }) {
   // Un código nuevo invalida los anteriores
   db.prepare('UPDATE codigos_login SET usado = 1 WHERE usuario_id = ? AND usado = 0').run(usuarioId);
   db.prepare('INSERT INTO codigos_login (usuario_id, hash, creado, expira) VALUES (?, ?, ?, ?)').run(usuarioId, hash, ahora, expira);
@@ -602,12 +649,23 @@ export function contarBorrado(usuario, alcance) {
       ? cuenta('SELECT COUNT(*) AS n FROM alertas_config WHERE usuario = ?', usuario)
         + cuenta('SELECT COUNT(*) AS n FROM alertas_enviadas WHERE usuario = ?', usuario)
       : 0,
+    notificaciones: alcance === 'todo' ? cuenta("SELECT COUNT(*) AS n FROM trabajos WHERE usuario = ? AND tipo = 'salida' AND estado IN ('pendiente','procesando')", usuario) : 0,
     contexto: alcance === 'todo' ? cuenta('SELECT COUNT(*) AS n FROM contexto WHERE usuario = ?', usuario) : 0,
   };
 }
 
 // Borra de verdad. Solo toca filas de este usuario. Debe llamarse dentro de una transacción.
 export function borrarDatos(usuario, alcance) {
+  return enTransaccion(() => borrarDatosAtomico(usuario, alcance));
+}
+
+function borrarDatosAtomico(usuario, alcance) {
+  // Borrar solo gastos podría dejar cobros sin el préstamo que los respalda.
+  if (alcance === 'gastos' && db.prepare("SELECT 1 FROM prestamos WHERE usuario = ? AND tipo = 'pago' LIMIT 1").get(usuario)) {
+    const error = new Error('No se pueden borrar los gastos mientras haya cobros de préstamos. Revisa los préstamos o elige borrar todos los movimientos.');
+    error.code = 'INTEGRIDAD_FINANCIERA';
+    throw error;
+  }
   const cantidades = contarBorrado(usuario, alcance);
   const filtro = filtroTipo(alcance);
   const ligadas = (tabla) => db.prepare(
@@ -626,6 +684,8 @@ export function borrarDatos(usuario, alcance) {
 
 // "Borrar todo" también limpia lo de la fase 2 (recordatorios, recurrentes, metas, alertas y contexto) de esa persona
 function borrarDatosFase2(usuario) {
+  db.prepare("UPDATE trabajos SET estado = 'cancelado', contenido = NULL, dueno = NULL, lease_hasta = 0 WHERE usuario = ? AND tipo = 'salida' AND estado IN ('pendiente','procesando')").run(usuario);
+  db.prepare('DELETE FROM alertas_reservadas WHERE usuario = ?').run(usuario);
   db.prepare('DELETE FROM recurrentes_ejecuciones WHERE recurrente_id IN (SELECT id FROM recurrentes WHERE usuario = ?)').run(usuario);
   db.prepare('DELETE FROM metas_aportes WHERE usuario = ?').run(usuario);
   for (const tabla of ['recordatorios', 'recurrentes', 'metas', 'alertas_config', 'alertas_enviadas', 'contexto']) {
@@ -720,3 +780,6 @@ export function prestamoProtegido(usuario, movimientoId) {
     .get(usuario, fila.clave);
   return Number(saldo) - fila.monto < 0 ? fila.persona : null;
 }
+
+// Todas las tablas base ya existen; las migraciones aditivas pueden referenciarlas.
+migrar(db, archivoDB);

@@ -61,6 +61,7 @@ async function consultar<T>(ruta: string, validar: (valor: unknown) => valor is 
     const respuesta = await fetch(`${config.base}${ruta}`, {
       headers: { Authorization: `Bearer ${config.token}`, 'X-Sesion': sesion },
       cache: 'no-store',
+      redirect: 'error',
       signal: AbortSignal.timeout(8000),
     })
     const cuerpo: unknown = await respuesta.json().catch(() => null)
@@ -138,19 +139,29 @@ export async function obtenerCategorias(): Promise<Resultado<string[]>> {
 
 export async function obtenerResumen(mes = mesActual()): Promise<Resultado<Resumen>> {
   if (!mesValido(mes)) return { ok: false, motivo: 'conexion' }
-  return consultar(`/api/resumen?mes=${encodeURIComponent(mes)}`, (dato): dato is Resumen => {
-    if (!dato || typeof dato !== 'object') return false
-    const valor = dato as Record<string, unknown>
-    return typeof valor.mes === 'string' && typeof valor.ingresos === 'number' && Number.isSafeInteger(valor.ingresos) && valor.ingresos >= 0 &&
-      typeof valor.gastos === 'number' && Number.isSafeInteger(valor.gastos) && valor.gastos >= 0 &&
-      typeof valor.balance === 'number' && Number.isSafeInteger(valor.balance) &&
-      Number.isSafeInteger(valor.prestado) && (valor.prestado as number) >= 0 &&
-      Number.isSafeInteger(valor.cobrado) && (valor.cobrado as number) >= 0 &&
-      Number.isSafeInteger(valor.pagosDeuda) && (valor.pagosDeuda as number) >= 0 &&
-      Array.isArray(valor.porCategoria) && valor.porCategoria.every((fila) =>
-        !!fila && typeof fila === 'object' && typeof (fila as Record<string, unknown>).categoria === 'string' &&
-        Number.isSafeInteger((fila as Record<string, unknown>).total) && (fila as Record<string, number>).total >= 0)
-  })
+  return consultar(`/api/resumen?mes=${encodeURIComponent(mes)}`, validarResumen)
+}
+
+function validarResumen(dato: unknown): dato is Resumen {
+  if (!dato || typeof dato !== 'object') return false
+  const valor = dato as Record<string, unknown>
+  return typeof valor.mes === 'string' && typeof valor.ingresos === 'number' && Number.isSafeInteger(valor.ingresos) && valor.ingresos >= 0 &&
+    typeof valor.gastos === 'number' && Number.isSafeInteger(valor.gastos) && valor.gastos >= 0 &&
+    typeof valor.balance === 'number' && Number.isSafeInteger(valor.balance) &&
+    Number.isSafeInteger(valor.prestado) && (valor.prestado as number) >= 0 &&
+    Number.isSafeInteger(valor.cobrado) && (valor.cobrado as number) >= 0 &&
+    Number.isSafeInteger(valor.pagosDeuda) && (valor.pagosDeuda as number) >= 0 &&
+    Array.isArray(valor.porCategoria) && valor.porCategoria.every((fila) =>
+      !!fila && typeof fila === 'object' && typeof (fila as Record<string, unknown>).categoria === 'string' &&
+      Number.isSafeInteger((fila as Record<string, unknown>).total) && (fila as Record<string, number>).total >= 0)
+}
+
+// Misma validación y aislamiento de sesión; 6 meses necesitan una sola petición.
+export async function obtenerResumenes(meses: string[]): Promise<Resultado<Resumen>[]> {
+  if (!meses.length || meses.length > 12 || meses.some(m => !mesValido(m))) return meses.map(() => ({ ok: false, motivo: 'conexion' }))
+  const r = await consultar(`/api/resumenes?meses=${encodeURIComponent(meses.join(','))}`, (dato): dato is Resumen[] =>
+    Array.isArray(dato) && dato.length === meses.length && dato.every((fila, i) => validarResumen(fila) && fila.mes === meses[i]))
+  return r.ok ? r.datos.map(datos => ({ ok: true, datos })) : meses.map(() => r)
 }
 
 export async function obtenerMovimientos(filtros: MovimientoFiltros = {}): Promise<Resultado<Movimiento[]>> {

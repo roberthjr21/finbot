@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validarRecibo } from './media.js';
+process.env.DB_ARCHIVO = ':memory:';
+const { validarRecibo } = await import('./media.js');
 const hoy = '2026-11-09';
 const base = { es_recibo: true, comercio: 'Nequi', total: 75000, fecha: hoy, categoria: 'Servicios' };
 test('recarga Bancolombia nunca se registra como gasto', () => {

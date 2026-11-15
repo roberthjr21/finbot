@@ -1,3 +1,4 @@
+import { leerFormularioSeguro } from '@/lib/seguridad-http'
 import { origenValido } from '@/lib/auth-servidor'
 import { escribirBot, leerMonto, texto, volverA } from '@/lib/escritura'
 
@@ -5,7 +6,7 @@ import { escribirBot, leerMonto, texto, volverA } from '@/lib/escritura'
 // (doble clic, reintento), el bot lo registra una sola vez.
 export async function POST(request: Request) {
   if (!origenValido(request)) return new Response(null, { status: 403 })
-  const datos = await request.formData().catch(() => null)
+  const datos = await leerFormularioSeguro(request).catch(() => null)
   if (!datos) return volverA('/movimientos/nuevo', { e: 'Formulario no válido.' })
 
   const monto = leerMonto(datos.get('monto'))

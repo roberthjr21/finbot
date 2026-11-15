@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { validarRecibo } from './media.js';
+process.env.DB_ARCHIVO = ':memory:';
+const { validarRecibo } = await import('./media.js');
 const hoy = '2026-11-09';
 test('comprobante de recarga Nequi legible no es gasto', () => {
  const r = validarRecibo({es_recibo:true,comercio:'Bancolombia',total:75000,fecha:hoy,categoria:'Ahorro',tipo_operacion:'recarga'},hoy);

@@ -116,16 +116,23 @@ export function textoBasico(d) {
 // Texto a responder cuando la persona pide el análisis. `generar` se puede
 // reemplazar en pruebas; por defecto usa la IA configurada, si hay una.
 export async function responderAnalisis(usuario, hoy, { generar = hayIA() ? analizarConIA : null } = {}) {
-  const datos = datosAnalisis(usuario, hoy);
+  return responderDatosAnalisis(datosAnalisis(usuario,hoy),hoy,{generar});
+}
+
+// La cola almacena esta instantánea, sin descripciones ni nuevas lecturas financieras al reintentar.
+export async function responderDatosAnalisis(datos, hoy, { generar = hayIA() ? analizarConIA : null, registrarFallo = () => {} } = {}) {
   if (!datos.hay_datos) {
     return '📈 Todavía no tengo movimientos suficientes para analizar. Registra algunos gastos y vuelve a preguntarme.';
   }
   if (!generar) return textoBasico(datos);
 
   try {
-    return `📈 ${await generar(datos, hoy)}`;
-  } catch (e) {
-    console.error('No se pudo generar el análisis con IA:', e.message);
+    const texto = await generar(datos, hoy);
+    if (typeof texto !== 'string' || !texto.trim() || texto.length > 14000) throw new Error('Respuesta IA inválida');
+    return `📈 ${texto}`;
+  } catch {
+    registrarFallo();
+    console.error('No se pudo generar el análisis con IA; usando cálculo local.');
     return `${textoBasico(datos)}\n\nℹ️ La IA no estuvo disponible; te muestro solo los números.`;
   }
 }

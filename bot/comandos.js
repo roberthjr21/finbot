@@ -69,6 +69,7 @@ export const AYUDA = [
   '/presupuesto comida 300000',
   '/presupuestos',
   '/analisis',
+  '/diagnostico   (estado de IA, mensajes pendientes y modo de prueba)',
   '/saldo   (con /saldo detalle ves las cuentas)',
   '/guia   (guía paso a paso con ejemplos)',
   '/prueba on | off | estado   (modo temporal: no modifica tus finanzas reales)',
@@ -77,12 +78,12 @@ export const AYUDA = [
   '/consejos si|no   (avisos para ahorrar o invertir)',
   '/debo 50000 Juan   /abono 20000 Juan   /deudas [persona]',
   '/borrar ingresos | gastos | deudas | presupuestos | todo   (pide confirmación)',
+  '/privacidad   (retención y eliminación de cuenta)',
   '',
   '⏰ *Recordatorios*: /recordar mañana pagar arriendo 800000 · /recordatorios · /listo N',
   '🔁 *Recurrentes*: /recurrente gasto 30000 servicios mensual Netflix · /recurrentes · /pausar N · /reactivar N',
   '🎯 *Metas de ahorro*: /meta Viaje 3000000 · /metas · /aportar Viaje 50000',
   '🔔 *Alertas*: /alertas (ver y configurar)',
-  '🩺 /diagnostico: estado de la IA, voz/fotos, tu uso de hoy y el modo (normal o prueba).',
   '🎙️ Si te equivocas en lo último, dime: "mejor ponlo en transporte" o "era de 30 mil".',
   '🎙️ También puedes mandarme una *nota de voz* o una *foto de un recibo* (te pido confirmar antes de guardar).',
 ].join('\n');
@@ -172,6 +173,9 @@ export function interpretarComando(texto) {
 
     case 'ultimos':
       return { acciones: [{ nombre: 'ultimos_movimientos', datos: { cantidad: Number(resto[0]) || 5 } }] };
+
+    case 'privacidad':
+      return { respuesta: '🔒 /borrar todo elimina tus registros activos, pero conserva la cuenta, auditorías y respaldos. La eliminación definitiva requiere autorización expresa del titular y confirmación administrativa con el bot detenido. No borra los mensajes que conserva WhatsApp. Consulta la política de privacidad con el administrador.' };
 
     case 'deshacer':
       if (normalizar(resto[0] ?? '') === 'confirmar') {

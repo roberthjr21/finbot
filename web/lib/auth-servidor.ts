@@ -1,32 +1,7 @@
 import 'server-only'
 import { configuracionBot } from './sesion'
 
-// Las rutas POST solo aceptan peticiones hechas desde esta misma web (protección contra CSRF).
-export function origenValido(request: Request) {
-  const origen = request.headers.get('origin')
-  const anfitrion = request.headers.get('x-forwarded-host') ?? request.headers.get('host')
-  if (!origen || !anfitrion) return false
-  try {
-    return new URL(origen).host === anfitrion
-  } catch {
-    return false
-  }
-}
-
-// IP del visitante, para los límites del bot.
-// En Vercel, x-vercel-forwarded-for lo pone la plataforma y el cliente no puede falsificarlo.
-// Detrás de Cloudflare (sin Vercel) viene en cf-connecting-ip.
-export function ipCliente(request: Request) {
-  const h = request.headers
-  const ip = process.env.VERCEL
-    ? (h.get('x-vercel-forwarded-for') ?? h.get('x-real-ip'))
-    : (h.get('cf-connecting-ip') ?? h.get('x-forwarded-for')?.split(',')[0]?.trim())
-  return (ip ?? '?').slice(0, 64)
-}
-
-export function cookieSegura(request: Request) {
-  return request.headers.get('x-forwarded-proto') === 'https' || new URL(request.url).protocol === 'https:'
-}
+export { comprobarOrigen as origenValido, ipConfiable as ipCliente, requiereCookieSegura as cookieSegura } from './seguridad-http'
 
 // Llama a las rutas internas del bot con la clave del servidor. Devuelve estado 0 si no responde.
 export async function postBot(ruta: string, cuerpo: unknown, ip: string) {
@@ -35,6 +10,7 @@ export async function postBot(ruta: string, cuerpo: unknown, ip: string) {
   try {
     const respuesta = await fetch(`${config.base}${ruta}`, {
       method: 'POST',
+      redirect: 'error',
       headers: { Authorization: `Bearer ${config.token}`, 'Content-Type': 'application/json', 'X-Cliente-Ip': ip },
       body: JSON.stringify(cuerpo),
       cache: 'no-store',

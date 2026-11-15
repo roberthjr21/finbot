@@ -10,7 +10,7 @@ import {
   obtenerMovimientos,
   obtenerPrestamos,
   obtenerPresupuestos,
-  obtenerResumen,
+  obtenerResumenes,
   obtenerSalud,
   obtenerSaldo,
 } from '@/lib/bot-api'
@@ -23,7 +23,7 @@ export default async function Page() {
     obtenerSaldo(),
     obtenerDeudas(),
     obtenerPrestamos(),
-    Promise.all(meses.map((mes) => obtenerResumen(mes))),
+    obtenerResumenes(meses),
     obtenerMovimientos({ limite: 6 }),
     obtenerPresupuestos(),
     obtenerCategorias(),

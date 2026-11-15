@@ -1,4 +1,4 @@
-import { redactar } from './registro.js';
+import { leerJsonAcotado } from './http-seguro.js';
 import { CATEGORIAS } from './categorias.js';
 import { montoMaximo } from './montos.js';
 
@@ -257,8 +257,6 @@ const tiempoIntento = () => numeroEnv('TIEMPO_IA_MS', 15_000) || 15_000;
 const pausa = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const esTemporal = (estado) => estado === 429 || estado >= 500;
 
-// Error de la IA con un código que el bot traduce a un mensaje claro para la persona:
-//   cuota (429) · saturado (5xx) · tiempo (no respondió) · clave (401/403) · otro
 export class ErrorIA extends Error {
   constructor(mensaje, { codigo = 'otro', estado, reintentarEnMs } = {}) {
     super(mensaje);
@@ -268,70 +266,59 @@ export class ErrorIA extends Error {
     this.reintentarEnMs = reintentarEnMs;
   }
 }
-const codigoDeEstado = (estado) => (estado === 429 ? 'cuota' : estado >= 500 ? 'saturado' : [401, 403].includes(estado) ? 'clave' : 'otro');
-
-// Enfriamiento por límite de cuota (429): mientras dura, NO se llama a la API (cada llamada fallida
-// gasta cuota y tiempo). Se respeta Retry-After / retryDelay y, si no vienen, ENFRIAMIENTO_429_S (60 s).
+const codigoDeEstado = (n) => n === 429 ? 'cuota' : n >= 500 ? 'saturado' : [401, 403].includes(n) ? 'clave' : 'otro';
 const enfriamientos = new Map();
 export const reiniciarEnfriamientos = () => enfriamientos.clear();
 export const enfriamientoRestante = (clave) => Math.max(0, (enfriamientos.get(clave) ?? 0) - Date.now());
-export const estadoEnfriamiento = () => Math.max(0, ...[...enfriamientos.values()].map((hasta) => hasta - Date.now()));
+export const estadoEnfriamiento = () => Math.max(0, ...[...enfriamientos.values()].map(hasta => hasta - Date.now()));
 const MAX_ENFRIAMIENTO_MS = 15 * 60_000;
 
-async function esperaDe429(res) {
-  const crudo = res.headers?.get?.('retry-after');
-  const cabecera = crudo === null || crudo === undefined || crudo === '' ? NaN : Number(crudo);
-  if (Number.isFinite(cabecera) && cabecera >= 0) return cabecera * 1000;
-  try {
-    const cuerpo = await res.clone().text();
-    const m = cuerpo.match(/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/);
-    if (m) return Number(m[1]) * 1000;
-  } catch { /* sin detalle: se usa el valor por defecto */ }
-  return null;
+function esperaDe429(res) {
+  const valor = res.headers?.get?.('retry-after')?.trim();
+  if (valor) {
+    const segundos = Number(valor);
+    if (Number.isFinite(segundos) && segundos >= 0) return Math.min(segundos * 1000, MAX_ENFRIAMIENTO_MS);
+    const fecha = Date.parse(valor);
+    if (Number.isFinite(fecha)) return Math.min(Math.max(0, fecha - Date.now()), MAX_ENFRIAMIENTO_MS);
+  }
+  return Math.min(numeroEnv('ENFRIAMIENTO_429_S', 60) * 1000, MAX_ENFRIAMIENTO_MS);
 }
 
-// Mensaje para la persona según el tipo de fallo de la IA (sin detalles técnicos ni claves)
-export function mensajeErrorIA(error, { sufijo = 'Mientras tanto puedes usar comandos, por ejemplo:\n/gasto 20000 comida almuerzo' } = {}) {
-  const minutos = Math.max(1, Math.ceil((error?.reintentarEnMs ?? 60_000) / 60_000));
-  switch (error?.codigo) {
-    case 'cuota': return `⏳ La IA llegó a su límite de uso por ahora (se libera en ~${minutos} min). ${sufijo}`;
-    case 'saturado': return `😕 El servicio de IA está saturado en este momento. Intenta de nuevo en un rato. ${sufijo}`;
-    case 'tiempo': return `😕 La IA no respondió a tiempo. Intenta de nuevo en un momento. ${sufijo}`;
-    case 'clave': return `⚠️ La IA no está bien configurada en el servidor (el administrador debe revisar la clave). ${sufijo}`;
-    default: return `😕 La IA no respondió ahora mismo. Intenta de nuevo en un momento. ${sufijo}`;
+export function mensajeErrorIA(error, { sufijo = 'Puedes seguir usando comandos como /gasto 20000 comida almuerzo.' } = {}) {
+  const codigo = error?.codigo ?? codigoDeEstado(error?.estado);
+  switch (codigo) {
+    case 'cuota': return `⏳ La IA llegó a su límite temporal. Intenta nuevamente más tarde. ${sufijo}`;
+    case 'saturado': return `😕 El proveedor de IA está saturado. Intenta otra vez en un momento. ${sufijo}`;
+    case 'tiempo': return `😕 La IA no respondió a tiempo. ${sufijo}`;
+    case 'clave': return `⚠️ La IA no está correctamente configurada; el administrador debe revisar su acceso. ${sufijo}`;
+    default: return `😕 No pude consultar la IA ahora mismo. ${sufijo}`;
   }
 }
 
-// Hace la petición con hasta `intentos` intentos.
-//  • 503/5xx, tiempo agotado y fallos de red: se reintenta (con pausa creciente).
-//  • 429 (cuota): NO se reintenta salvo que el servidor pida esperar muy poco (≤ ESPERA_429_MAX_MS, 5 s);
-//    si no, se activa un enfriamiento para esa `clave` y se devuelve la respuesta.
-// Devuelve la última respuesta, o lanza el último error si nunca hubo respuesta.
-async function solicitarConReintento(url, opciones, { intentos = 2, clave = url } = {}) {
-  const restante = enfriamientoRestante(clave);
-  if (restante > 0) {
-    throw new ErrorIA(`API 429: límite de cuota; la IA queda en espera ${Math.ceil(restante / 1000)} s`, { codigo: 'cuota', estado: 429, reintentarEnMs: restante });
-  }
+// El enfriamiento por URL reduce intentos redundantes durante cuotas 429.
+// Retry-After acepta segundos o fecha HTTP; nunca se registra el cuerpo del error.
+async function solicitarConReintento(url, opciones, { intentos = 2 } = {}) {
+  const restante = enfriamientoRestante(url);
+  if (restante > 0) throw new ErrorIA('Cuota del proveedor temporalmente limitada', { codigo: 'cuota', estado: 429, reintentarEnMs: restante });
   for (let intento = 1; ; intento++) {
     let res;
     try {
-      res = await fetch(url, { ...opciones, signal: AbortSignal.timeout(tiempoIntento()) });
+      res = await fetch(url, { ...opciones, redirect: 'error', signal: AbortSignal.timeout(tiempoIntento()) });
     } catch (e) {
-      const tiempo = ['TimeoutError', 'AbortError'].includes(e?.name);
-      const error = tiempo ? new ErrorIA('La IA no respondió a tiempo', { codigo: 'tiempo' }) : e;
+      const temporal = ['TimeoutError', 'AbortError'].includes(e?.name);
+      const error = new ErrorIA(temporal ? 'La IA no respondió a tiempo' : 'Fallo de conexión con la IA', { codigo: temporal ? 'tiempo' : 'saturado' });
       if (intento >= intentos) throw error;
       await pausa(numeroEnv('ESPERA_REINTENTO_MS', 1500) * intento);
       continue;
     }
     if (res.status === 429) {
-      const espera = await esperaDe429(res);
-      if (espera !== null && espera <= numeroEnv('ESPERA_429_MAX_MS', 5000) && intento < intentos) {
+      const espera = esperaDe429(res);
+      if (espera <= numeroEnv('ESPERA_429_MAX_MS', 5000) && intento < intentos) {
         await res.body?.cancel().catch(() => {});
         await pausa(espera);
         continue;
       }
-      const duracion = Math.min(espera ?? numeroEnv('ENFRIAMIENTO_429_S', 60) * 1000, MAX_ENFRIAMIENTO_MS);
-      enfriamientos.set(clave, Date.now() + duracion);
+      enfriamientos.set(url, Date.now() + espera);
       return res;
     }
     if (!esTemporal(res.status) || intento >= intentos) return res;
@@ -341,8 +328,11 @@ async function solicitarConReintento(url, opciones, { intentos = 2, clave = url 
 }
 
 async function leerError(res) {
-  const detalle = redactar(await res.text().catch(() => ''));
-  return new ErrorIA(`API ${res.status}: ${detalle.slice(0, 200)}`, { codigo: codigoDeEstado(res.status), estado: res.status, reintentarEnMs: res.status === 429 ? estadoEnfriamiento() : undefined });
+  await res.body?.cancel().catch(() => {});
+  return new ErrorIA(`API ${res.status}: el proveedor rechazó la petición`, {
+    codigo: codigoDeEstado(res.status), estado: res.status,
+    reintentarEnMs: res.status === 429 ? estadoEnfriamiento() : undefined,
+  });
 }
 
 // Modelos de Gemini en orden de preferencia: el principal y, después, el de respaldo.
@@ -379,7 +369,7 @@ export async function pedirAGemini(cuerpo) {
           headers: { 'content-type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
           body: JSON.stringify(cuerpo),
         },
-        { intentos: posicion === 0 ? 2 : 1, clave: `gemini:${modelo ?? 'fijo'}` },
+        { intentos: posicion === 0 ? 2 : 1 },
       );
     } catch (error) {
       ultimoError = error;
@@ -387,7 +377,7 @@ export async function pedirAGemini(cuerpo) {
       continue;
     }
 
-    if (res.ok) return res.json();
+    if (res.ok) return leerJsonAcotado(res);
 
     ultimoError = await leerError(res);
     if (res.status !== 404 && !esTemporal(res.status)) throw ultimoError;
@@ -480,7 +470,7 @@ async function conClaude(texto, hoy) {
   });
   if (!res.ok) throw await leerError(res);
 
-  const bloques = (await res.json()).content ?? [];
+  const bloques = (await leerJsonAcotado(res)).content ?? [];
   return {
     acciones: bloques
       .filter((b) => b.type === 'tool_use')
@@ -559,7 +549,7 @@ async function analisisConClaude(datos, hoy) {
   });
   if (!res.ok) throw await leerError(res);
 
-  return ((await res.json()).content ?? [])
+  return ((await leerJsonAcotado(res)).content ?? [])
     .filter((b) => b.type === 'text')
     .map((b) => b.text)
     .join('\n')
