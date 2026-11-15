@@ -2,16 +2,32 @@ import { leerJsonAcotado } from './http-seguro.js';
 import { CATEGORIAS } from './categorias.js';
 import { montoMaximo } from './montos.js';
 
-// Proveedor de IA: Gemini si hay GEMINI_API_KEY; si no, Claude si hay ANTHROPIC_API_KEY.
-// MODELO_GEMINI / MODELO_ANTHROPIC eligen cada proveedor; MODELO_IA queda como compatibilidad.
-// MODELO_RESPALDO es el modelo de Gemini que se prueba si el principal falla.
-function proveedor() {
-  if (process.env.GEMINI_API_KEY) return 'gemini';
-  if (process.env.ANTHROPIC_API_KEY) return 'claude';
-  return null;
+// La selección explícita prevalece sobre las claves disponibles. "auto" conserva
+// la preferencia anterior por Gemini, salvo que MODELO_IA identifique un Claude.
+export function seleccionarProveedorIA(entorno = process.env) {
+  const preferido = (entorno.PROVEEDOR_IA || 'auto').trim().toLowerCase();
+  if (!['auto', 'gemini', 'claude'].includes(preferido)) {
+    throw new Error('PROVEEDOR_IA debe ser auto, gemini o claude.');
+  }
+  const gemini = Boolean(entorno.GEMINI_API_KEY?.trim());
+  const claude = Boolean(entorno.ANTHROPIC_API_KEY?.trim());
+  if (preferido === 'gemini') return gemini ? 'gemini' : null;
+  if (preferido === 'claude') return claude ? 'claude' : null;
+  if (gemini && claude && /^claude-/i.test(entorno.MODELO_IA?.trim() ?? '')) return 'claude';
+  return gemini ? 'gemini' : claude ? 'claude' : null;
 }
+const proveedor = () => seleccionarProveedorIA();
 export const hayIA = () => proveedor() !== null;
 export const nombreProveedor = () => proveedor();
+
+// MODELO_IA es compatibilidad heredada, pero nunca se envía un modelo de
+// Claude a Gemini ni viceversa, incluso si están configuradas ambas claves.
+export function modeloPreferidoIA(tipo, entorno = process.env) {
+  const heredado = entorno.MODELO_IA?.trim() ?? '';
+  if (tipo === 'gemini') return entorno.MODELO_GEMINI?.trim() || (/^gemini-/i.test(heredado) ? heredado : 'gemini-3.5-flash');
+  if (tipo === 'claude') return entorno.MODELO_ANTHROPIC?.trim() || (/^claude-/i.test(heredado) ? heredado : 'claude-haiku-5-5');
+  throw new Error('Proveedor IA desconocido');
+}
 
 const MODELO_GEMINI_POR_DEFECTO = 'gemini-3.5-flash';
 const MODELO_RESPALDO_POR_DEFECTO = 'gemini-flash-lite-latest';
@@ -298,9 +314,10 @@ export function mensajeErrorIA(error, { sufijo = 'Puedes seguir usando comandos 
 // El enfriamiento por URL reduce intentos redundantes durante cuotas 429.
 // Retry-After acepta segundos o fecha HTTP; nunca se registra el cuerpo del error.
 async function solicitarConReintento(url, opciones, { intentos = 2 } = {}) {
-  const restante = enfriamientoRestante(url);
-  if (restante > 0) throw new ErrorIA('Cuota del proveedor temporalmente limitada', { codigo: 'cuota', estado: 429, reintentarEnMs: restante });
   for (let intento = 1; ; intento++) {
+    // Otra petición puede activar enfriamiento mientras esta espera para reintentar.
+    const restante = enfriamientoRestante(url);
+    if (restante > 0) throw new ErrorIA('Cuota del proveedor temporalmente limitada', { codigo: 'cuota', estado: 429, reintentarEnMs: restante });
     let res;
     try {
       res = await fetch(url, { ...opciones, redirect: 'error', signal: AbortSignal.timeout(tiempoIntento()) });
@@ -338,7 +355,7 @@ async function leerError(res) {
 // Modelos de Gemini en orden de preferencia: el principal y, después, el de respaldo.
 // Si MODELO_RESPALDO está vacío, no se usa respaldo.
 function modelosGemini() {
-  const principal = process.env.MODELO_GEMINI ?? process.env.MODELO_IA ?? MODELO_GEMINI_POR_DEFECTO;
+  const principal = modeloPreferidoIA('gemini');
   const respaldo = process.env.MODELO_RESPALDO ?? MODELO_RESPALDO_POR_DEFECTO;
   return [...new Set([principal, respaldo].filter(Boolean))];
 }
@@ -461,7 +478,7 @@ async function conClaude(texto, hoy) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: process.env.MODELO_ANTHROPIC ?? process.env.MODELO_IA ?? 'claude-haiku-5-5',
+      model: modeloPreferidoIA('claude'),
       max_tokens: 600,
       system: instrucciones(hoy),
       tools: herramientasClaude(),
@@ -541,7 +558,7 @@ async function analisisConClaude(datos, hoy) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: process.env.MODELO_ANTHROPIC ?? process.env.MODELO_IA ?? 'claude-haiku-5-5',
+      model: modeloPreferidoIA('claude'),
       max_tokens: 700,
       system: instruccionesAnalisis(hoy),
       messages: [{ role: 'user', content: JSON.stringify(datos) }],

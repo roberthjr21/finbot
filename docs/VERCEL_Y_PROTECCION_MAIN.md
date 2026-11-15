@@ -4,7 +4,7 @@
 
 No se desplegó una preview ni se expuso la API durante esta etapa. El build, las pruebas de origen/cookies y los ensayos de navegador son locales. No demuestran conectividad del equipo del bot desde Vercel, certificados o reglas del túnel.
 
-1. Usar un bot y una base de **pruebas**, números permitidos y credenciales independientes. No reutilizar `auth/` ni bases reales. Instalar primero el bot actualizado (migración v6); verificar copia previa, `node estado.js` y registros.
+1. Usar un bot y una base de **pruebas**, números permitidos y credenciales independientes. No reutilizar `auth/` ni bases reales. Instalar primero el bot actualizado (esquema migrado a versión 9); verificar copia previa, `node estado.js` y registros.
 2. Configurar servicio con Node 22 actualizado, `NODE_ENV=production`, `REGISTRO_ABIERTO=0`, `NUMEROS_PERMITIDOS` de pruebas, `API_HOST=127.0.0.1`, `API_PUERTO=3001`, `API_TOKEN` y `SECRETO_SESION` fuertes e independientes. Configurar `COLA_SECRETO` de 32+ caracteres; si se omite se usa la clave de sesión.
 3. Preparar HTTPS/túnel y control de acceso sin publicar la API directa. Comprobar que el origen no sea accesible por una ruta que evite el gateway. Esta auditoría no habilita puertos ni instala un túnel.
 4. En Vercel usar raíz `web`, instalar con `pnpm install --frozen-lockfile` y compilar con `pnpm build`. Playwright solo es dependencia de desarrollo para pruebas, no se lanza durante el build ni en el servidor web.
@@ -44,3 +44,28 @@ Propone PR obligatorio, una revisión, invalidar revisiones desactualizadas, con
 Aplica también a administradores, bloquea force-push y eliminación de main. Revisar los nombres exactos de checks en el PR, políticas de recuperación, colaboradores que puedan revisar y posibles reglas existentes antes de aprobar. No habilita merge automático ni despliegues.
 
 Referencia de configuración: [GitHub: protección de ramas](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).
+
+## Fase de estabilización (después del PR #35)
+
+Para el bot de Fedora, usa un usuario dedicado y `UMask=0077` en systemd.
+FinBot restringe permisos del archivo SQLite, WAL/SHM y de `auth/` al iniciar,
+pero no modifica directorios padres arbitrarios. Si una ruta contiene un enlace
+simbólico, se detiene con error para evitar redirecciones de datos privados.
+
+`PROVEEDOR_IA=gemini` o `PROVEEDOR_IA=claude` elige el proveedor sin depender
+del orden de las claves; `MODELO_GEMINI` y `MODELO_ANTHROPIC` se configuran
+por separado. En `auto`, ambas claves siguen siendo válidas, con prioridad
+compatible con `MODELO_IA` heredado.
+
+El diagnóstico de WhatsApp muestra una salud del programador local por etapa,
+pero no certifica que WhatsApp esté conectado ni que se haya entregado una alerta.
+Para validar producción, probar en un entorno aislado los códigos OTP, la API
+HTTPS, el envío y recepción de WhatsApp, cuotas, recuperación tras caída,
+edición financiera y restauración de copias cifradas.
+
+No hay permisos de administración del repositorio en el conector de GitHub
+utilizado para este trabajo: no se pueden aplicar desde aquí las reglas de
+protección de `main`. El administrador debe abrir Settings → Rules → Rulesets
+o Settings → Branches y exigir checks `Bot (pruebas)`, `Web (typecheck, lint y build)`
+y `Secretos y artefactos privados`, bloquear force-push/eliminación y exigir
+revisión de PR, usando `.github/propuestas/proteccion-main.json` como referencia.

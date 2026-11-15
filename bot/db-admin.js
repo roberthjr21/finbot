@@ -4,6 +4,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
+import { aplicarUmaskPrivada } from './seguridad-archivos.js';
+aplicarUmaskPrivada();
 
 export function validarBase(archivo) {
   const db = new DatabaseSync(archivo, { readOnly: true });

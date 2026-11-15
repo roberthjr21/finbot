@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Diagnóstico de solo lectura; no carga .env, WhatsApp ni migra la base.
 import { DatabaseSync } from 'node:sqlite';
+import { aplicarUmaskPrivada } from './seguridad-archivos.js';
+aplicarUmaskPrivada();
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

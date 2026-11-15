@@ -36,3 +36,22 @@ test('confirmaciones vencen a los 10 minutos aunque el contexto general siga vig
   assert.equal(c.pendiente, undefined);
   assert.deepEqual(c.ultimo, { id: 12 });
 });
+
+test('programador conserva etapas fallidas en diagnóstico sin exponer mensajes privados', async () => {
+  const { ciclo, _reiniciar, estadoProgramador } = await import('./programador.js');
+  _reiniciar();
+  const r = await ciclo({
+    ahora: new Date('2026-11-14T16:00:00Z'),
+    enviar: async () => {},
+    ejecutarRecurrentes: () => { throw new Error('DATO_PRIVADO'); },
+    consultarRecordatorios: () => { throw new Error('OTRO_DATO_PRIVADO'); },
+  });
+  assert.deepEqual(r.fallos, ['recurrentes', 'recordatorios']);
+  const estado = estadoProgramador();
+  assert.deepEqual(estado.etapasFallidas, ['recurrentes', 'recordatorios']);
+  assert.equal(estado.ultimoExito, null);
+  const salida = textoDiagnostico(A, new Date());
+  assert.match(salida, /Programador: detenido \(fallos: recurrentes, recordatorios\)/);
+  assert.ok(!salida.includes('DATO_PRIVADO') && !salida.includes('OTRO_DATO_PRIVADO'));
+  _reiniciar();
+});

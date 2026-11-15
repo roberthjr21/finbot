@@ -5,6 +5,7 @@ import { entero } from './limites.js';
 import { hayIA, nombreProveedor } from './ia.js';
 import { hayMedia } from './media.js';
 import * as contexto from './contexto.js';
+import { estadoProgramador } from './programador.js';
 
 export function textoDiagnostico(usuario, ahora = new Date()) {
   const real = db.basePersistente();
@@ -17,6 +18,7 @@ export function textoDiagnostico(usuario, ahora = new Date()) {
   const modo = db.pruebaActiva(usuario) ? '🧪 prueba activa'
     : proyectado === 'prueba' ? '🧪 prueba pendiente de reactivar' : 'normal';
   const pendiente = contexto.obtener(usuario);
+  const programador = estadoProgramador(ahora.getTime());
   const formato = (n) => Number(n).toLocaleString('es-CO');
   return [
     '🩺 *Diagnóstico de tu FinBot*',
@@ -27,6 +29,7 @@ export function textoDiagnostico(usuario, ahora = new Date()) {
     `Solicitudes de IA hoy: ${formato(uso.ia)}/${formato(entero('MAX_IA_DIA', 150))}`,
     `Tus trabajos pendientes: ${formato(entradas)} de entrada, ${formato(salidas)} de salida`,
     `Confirmación pendiente: ${pendiente.pendiente || pendiente.recarga ? 'sí' : 'no'}`,
+    `Programador: ${programador.estado}${programador.etapasFallidas.length ? ' (fallos: ' + programador.etapasFallidas.join(', ') + ')' : ''}`,
     'Este diagnóstico no comprueba la entrega en WhatsApp ni la disponibilidad del proveedor de IA.',
   ].join('\n');
 }

@@ -11,23 +11,47 @@ import { entero } from './limites.js';
 
 let corriendo = false;
 let ultimaAlerta = 0;
+let servicioActivo = false;
+let inicioCiclo = null;
+let finCiclo = null;
+let ultimoExito = null;
+let fallosUltimos = [];
+
+// No se registran errores crudos ni datos de otros usuarios. Estado de salud
+// del proceso actual (se reinicia al arrancar el servicio).
+export function estadoProgramador(ahora = Date.now()) {
+  const intervalo = Math.max(1, entero('PROGRAMADOR_SEGUNDOS', 60)) * 1000;
+  let estado;
+  if (corriendo) estado = inicioCiclo !== null && ahora - inicioCiclo > Math.max(3 * intervalo, 60000) ? 'atascado' : 'ejecutando';
+  else if (!servicioActivo) estado = finCiclo === null ? 'sin_iniciar' : 'detenido';
+  else if (finCiclo === null) estado = 'pendiente';
+  else if (fallosUltimos.length) estado = 'degradado';
+  else estado = ahora - finCiclo > Math.max(3 * intervalo, 60000) ? 'atrasado' : 'correcto';
+  return { estado, ultimoInicio: inicioCiclo, ultimoFin: finCiclo, ultimoExito, etapasFallidas: [...fallosUltimos] };
+}
+
 // Reservar la notificación y su marca de alerta sucede en una sola transacción.
-export async function ciclo({ enviar, ahora = new Date() }) {
+export async function ciclo({ enviar, ahora = new Date(), ejecutarRecurrentes = recurrentes.ejecutarPendientes, consultarRecordatorios = recordatorios.vencidos } = {}) {
   if (corriendo) return { omitido: true };
   corriendo = true;
-  const resultado = { recurrentes: 0, recordatorios: 0, alertas: 0 };
+  inicioCiclo = Date.now();
+  const resultado = { recurrentes: 0, recordatorios: 0, alertas: 0, fallos: [] };
+  const registrarFallo = (etapa) => {
+    if (!resultado.fallos.includes(etapa)) resultado.fallos.push(etapa);
+    console.error(`Programador: fallo en ${etapa}`);
+  };
   try {
     trabajos.purgarVencidos(ahora.getTime());
     trabajos.reconciliarReservas();
     trabajos.retenerTerminales(ahora.getTime());
-    try { resultado.recurrentes = recurrentes.ejecutarPendientes({ hoy: fechaBogota(ahora), ahora: ahora.getTime() }).length; }
-    catch { console.error('Programador: no se pudieron registrar recurrentes'); }
+    try { resultado.recurrentes = ejecutarRecurrentes({ hoy: fechaBogota(ahora), ahora: ahora.getTime() }).length; }
+    catch { registrarFallo('recurrentes'); }
     try {
-      for (const r of recordatorios.vencidos(ahora)) {
+      for (const r of consultarRecordatorios(ahora)) {
         const k = `recordatorio:${r.id}:${r.revision}`;
         outbox.encolar({ clave: k, usuario: r.usuario, texto: recordatorios.textoAviso(r), evento: { tipo: 'recordatorio', id: r.id, vence: r.vence, hora: r.hora, revision: r.revision }, ahora: ahora.getTime() });
       }
-    } catch { console.error('Programador: no se pudo reservar un recordatorio'); }
+    } catch { registrarFallo('recordatorios'); }
     if (ahora.getTime() - ultimaAlerta >= entero('ALERTAS_CADA_MIN', 15) * 60000) {
       try {
         const usuarios = db.base().prepare("SELECT telefono FROM usuarios WHERE estado = 'activo'").all();
@@ -42,7 +66,7 @@ export async function ciclo({ enviar, ahora = new Date() }) {
           });
         }
         ultimaAlerta = ahora.getTime();
-      } catch { console.error('Programador: no se pudieron reservar las alertas'); }
+      } catch { registrarFallo('alertas'); }
     }
     const antes = db.base().prepare("SELECT COUNT(*) AS n FROM recordatorios WHERE estado = 'enviado'").get().n;
     const alertasAntes = db.base().prepare('SELECT COUNT(*) AS n FROM alertas_enviadas').get().n;
@@ -52,15 +76,27 @@ export async function ciclo({ enviar, ahora = new Date() }) {
     contexto.purgar(ahora.getTime());
     db.limpiarAcceso(Math.floor(ahora.getTime()/1000));
     db.base().prepare('DELETE FROM privacidad_solicitudes WHERE expira <= ?').run(ahora.getTime());
-  } finally { corriendo = false; }
+  } catch {
+    registrarFallo('mantenimiento');
+    throw new Error('No se pudo completar el ciclo del programador');
+  } finally {
+    finCiclo = Date.now();
+    fallosUltimos = [...resultado.fallos];
+    if (!resultado.fallos.length) ultimoExito = finCiclo;
+    corriendo = false;
+  }
   return resultado;
 }
 export function iniciarProgramador({ enviar, primeraEsperaMs = 15000 }) {
+  servicioActivo = true;
   let intervalo;
   let activo;
   const ejecutar = () => { activo = ciclo({ enviar }).catch(() => console.error('Fallo del programador')); };
   const inicio = setTimeout(() => { ejecutar(); intervalo = setInterval(ejecutar, entero('PROGRAMADOR_SEGUNDOS', 60) * 1000); intervalo.unref(); }, primeraEsperaMs);
   inicio.unref();
-  return async () => { clearTimeout(inicio); clearInterval(intervalo); await activo; };
+  return async () => { clearTimeout(inicio); clearInterval(intervalo); await activo; servicioActivo = false; };
 }
-export const _reiniciar = () => { corriendo = false; ultimaAlerta = 0; };
+export const _reiniciar = () => {
+  corriendo = false; ultimaAlerta = 0; servicioActivo = false;
+  inicioCiclo = null; finCiclo = null; ultimoExito = null; fallosUltimos = [];
+};

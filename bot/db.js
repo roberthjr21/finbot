@@ -3,10 +3,16 @@ import { DatabaseSync } from 'node:sqlite';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { normalizar } from './categorias.js';
 import { migrar } from './migraciones.js';
+import { aplicarUmaskPrivada, protegerSQLite } from './seguridad-archivos.js';
 
 // Un solo archivo (finanzas.db). Los montos se guardan como pesos enteros.
 const archivoDB = process.env.DB_ARCHIVO ?? 'finanzas.db';
+// Se establece antes de que SQLite o sus respaldos creen archivos; no se toca
+// el directorio padre, que podría ser compartido con otros proyectos.
+aplicarUmaskPrivada();
+protegerSQLite(archivoDB);
 const dbReal = new DatabaseSync(archivoDB);
+protegerSQLite(archivoDB);
 const baseTemporal = new AsyncLocalStorage();
 const controlTransaccion = new AsyncLocalStorage();
 export const conControlTransaccion = (control, tarea) => controlTransaccion.run(control, tarea);
