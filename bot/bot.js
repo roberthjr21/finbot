@@ -15,7 +15,7 @@ import pino from 'pino';
 
 import * as db from './db.js';
 import { fechaBogota } from './fechas.js';
-import { hayIA, interpretar, nombreProveedor } from './ia.js';
+import { hayIA, interpretar, nombreProveedor, mensajeErrorIA } from './ia.js';
 import { interpretarComando, atajoSinIA, pideGuia, GUIA } from './comandos.js';
 import { ejecutar } from './acciones.js';
 import { reservarAnalisis, procesarAnalisis } from './analisis-trabajos.js';
@@ -317,11 +317,7 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
       iaFallo = true;
       respuestas.push('ℹ️ La IA no respondió a tiempo, pero esto lo pude resolver sin ella:');
     } else {
-      respuestas.push(
-        '😕 La IA no respondió ahora mismo. ' +
-        'Intenta de nuevo en un momento o usa un comando, por ejemplo:\n' +
-        '/gasto 20000 comida almuerzo'
-      );
+      respuestas.push(mensajeErrorIA(e));
     }
   }
 
@@ -395,7 +391,7 @@ async function atenderAudio(sock, jid, msg, usuario) {
     transcripcion = await media.transcribirAudio({ buffer: await descargar(sock, msg), mimetype: nota.mimetype });
   } catch (error) {
     console.error('No se pudo transcribir la nota de voz:', error.message);
-    completarMedia({ usuario, jid, mensajeId: msg.key.id, texto: '🎙️ No pude procesar ese audio ahora mismo. Intenta de nuevo o escríbeme el gasto.' });
+    completarMedia({ usuario, jid, mensajeId: msg.key.id, texto: `🎙️ ${mensajeErrorIA(error, { sufijo: 'También puedes escribir el gasto.' })}` });
     trabajadorSalida?.despertar();
     return;
   }
