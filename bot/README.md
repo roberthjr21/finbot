@@ -5,7 +5,7 @@ registra en una base de datos SQLite. También te hace resúmenes, controla pres
 y expone una API autenticada de consulta y escritura para el panel web.
 
 ```
-Tu WhatsApp ──► bot.js (Baileys) ──► ia.js (Claude interpreta)  ──► acciones.js ──► finanzas.db
+Tu WhatsApp ──► bot.js (Baileys) ──► ia.js (Gemini o Claude)  ──► acciones.js ──► finanzas.db
                      │                                                                  ▲
                      └── comandos.js (/gasto, /resumen... sin IA)                        │
                                                                    api.js (para tu página)┘
@@ -15,9 +15,8 @@ Tu WhatsApp ──► bot.js (Baileys) ──► ia.js (Claude interpreta)  ─�
 - **Node.js 22.5 o superior** (`node --version`). Usa el SQLite que ya trae Node, sin compilar nada.
 - **Un número de WhatsApp para el bot** (idealmente uno secundario; Baileys no es oficial y puede
   provocar bloqueos). Tú le escribes desde tu número personal.
-- **Una clave de la API de Anthropic** (console.anthropic.com) si quieres escribir en texto libre.
-  Es independiente de tu suscripción a Claude y se paga por uso. Sin clave, el bot funciona solo
-  con comandos.
+- **Una clave API de Gemini o Anthropic** si quieres escribir en texto libre; cada proveedor
+  se factura por separado de ChatGPT o Claude. Sin clave, el bot funciona con comandos.
 
 ## Instalación
 ```bash
@@ -29,7 +28,10 @@ nano .env        # pon tu número, tu clave y un API_TOKEN largo
 
 `.env.example` documenta la configuración. `MONTO_MAXIMO` define el máximo COP por movimiento y
 presupuesto (predeterminado: 100000000); `MODELO_GEMINI` y `MODELO_ANTHROPIC` permiten elegir
-modelos distintos. `MODELO_IA` sigue aceptándose por compatibilidad. También existen
+modelos distintos. `PROVEEDOR_IA=gemini|claude|auto` fija el proveedor; en `auto` se usa
+la clave disponible y, si están ambas, Gemini salvo que `MODELO_IA` empiece por `claude-`.
+`MODELO_IA` se conserva por compatibilidad, pero jamás se reutiliza como modelo del otro proveedor.
+También existen
 `DEBUG`, `MODO_AUTOCHAT`, `ESPERA_RECONEXION_MS`, `API_HOST`, `API_PUERTO`, `ORIGEN_PERMITIDO`,
 `DB_ARCHIVO`, `GEMINI_URL` y `ANTHROPIC_URL`.
 
@@ -55,6 +57,7 @@ cat > ~/.config/systemd/user/bot-financiero.service <<'EOF'
 Description=Bot financiero de WhatsApp
 
 [Service]
+UMask=0077
 WorkingDirectory=%h/bot-financiero
 ExecStart=/usr/bin/node --env-file=%h/bot-financiero/.env %h/bot-financiero/bot.js
 Restart=always
@@ -221,8 +224,10 @@ La restauración conserva el archivo original. Detén el bot antes de restaurar 
   dentro de dos minutos; `/deshacer cancelar` cancela la solicitud. Solo permite movimientos
   creados en las últimas 24 horas.
 - **Tus mensajes se envían al proveedor IA configurado** para interpretarlos (solo el texto de
-  cada mensaje, no tu historial): Gemini si hay `GEMINI_API_KEY`; de lo contrario Anthropic si
-  hay `ANTHROPIC_API_KEY`. Sin esas claves solo funcionan los comandos.
+  cada mensaje, no tu historial): selecciona `PROVEEDOR_IA` (`auto`, `gemini` o
+  `claude`). En `auto` se usa la clave disponible; con ambas, Gemini tiene prioridad
+  excepto si el modelo heredado `MODELO_IA` empieza por `claude-`. Para evitar
+  ambigüedad, define `PROVEEDOR_IA` explícitamente. Sin claves solo funcionan comandos.
 - **El análisis de gastos (`/analisis` o "cómo van mis gastos") sí envía tus cifras** al proveedor
   IA: totales por categoría de este mes y del mismo tramo del mes pasado, presupuestos con lo
   gastado y tus tres mayores gastos (monto y categoría). No envía las descripciones que escribes.
@@ -271,3 +276,24 @@ Documentación detallada:
 - [Retención y eliminación verificable](../docs/PRIVACIDAD_Y_RETENCION.md).
 - [Colas, avisos, respaldos y recuperación](../docs/OPERACION_Y_RECUPERACION.md).
 - [Informe de segunda etapa](../docs/AUDITORIA_FASE_2.md).
+
+## Endurecimiento local (Linux)
+
+Al cargar `db.js`, FinBot aplica una `umask 077` y ajusta `finanzas.db`, sus
+archivos WAL/SHM y los archivos privados existentes a permisos `0600`. El inicio
+de WhatsApp asegura `auth/` y su contenido con directorios `0700` y archivos
+`0600`; los respaldos automáticos también se almacenan en un directorio
+privado. Las herramientas offline tienen la misma `umask`. Rutas de archivo
+simbólicas en estos lugares se rechazan para evitar leer/escribir fuera del
+directorio previsto.
+
+**No se cambian los permisos del directorio padre de la base:** usa un usuario
+de sistema exclusivo y una carpeta privada para toda la instalación. Comprueba
+que la cuenta del proceso tenga propiedad sobre esos archivos; si el bot no
+puede corregir los permisos, se detiene en lugar de exponerlos. En Windows
+configura ACL NTFS: la protección por modo POSIX no sustituye las ACL.
+
+`/diagnostico` informa el estado del programador del proceso actual
+(`correcto`, `degradado`, `atrasado`, `atascado`, `pendiente` o
+`detenido`) y los nombres de las etapas fallidas, sin detalles internos.
+No es un monitor externo y se reinicia al reiniciar el proceso.

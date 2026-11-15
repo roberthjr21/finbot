@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Administración offline. No importa db.js: nunca abre por accidente la base predeterminada.
 import { DatabaseSync } from 'node:sqlite';
+import { aplicarUmaskPrivada } from './seguridad-archivos.js';
+aplicarUmaskPrivada();
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
