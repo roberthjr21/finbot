@@ -298,9 +298,10 @@ export function mensajeErrorIA(error, { sufijo = 'Puedes seguir usando comandos 
 // El enfriamiento por URL reduce intentos redundantes durante cuotas 429.
 // Retry-After acepta segundos o fecha HTTP; nunca se registra el cuerpo del error.
 async function solicitarConReintento(url, opciones, { intentos = 2 } = {}) {
-  const restante = enfriamientoRestante(url);
-  if (restante > 0) throw new ErrorIA('Cuota del proveedor temporalmente limitada', { codigo: 'cuota', estado: 429, reintentarEnMs: restante });
   for (let intento = 1; ; intento++) {
+    // Una solicitud paralela puede activar el enfriamiento mientras esperamos el reintento.
+    const restante = enfriamientoRestante(url);
+    if (restante > 0) throw new ErrorIA('Cuota del proveedor temporalmente limitada', { codigo: 'cuota', estado: 429, reintentarEnMs: restante });
     let res;
     try {
       res = await fetch(url, { ...opciones, redirect: 'error', signal: AbortSignal.timeout(tiempoIntento()) });

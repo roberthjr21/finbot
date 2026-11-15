@@ -31,3 +31,26 @@ test('errores 401 nunca exponen el cuerpo ni las credenciales', async () => {
   assert.match(mensajeErrorIA({ codigo: 'clave' }), /administrador/);
   assert.ok(!mensajeErrorIA({ codigo: 'clave' }).includes('401'));
 });
+
+test('un 429 de otra solicitud impide reintentar durante la pausa', async () => {
+  const esperaPrevia = process.env.ESPERA_REINTENTO_MS;
+  process.env.ESPERA_REINTENTO_MS = '80';
+  reiniciarEnfriamientos();
+  let llamadas = 0;
+  globalThis.fetch = async () => {
+    llamadas++;
+    if (llamadas === 1) return new Response('servicio temporal', { status: 503 });
+    return new Response('cuota', { status: 429, headers: { 'retry-after': '120' } });
+  };
+  try {
+    const primerIntento = pedirAGemini({});
+    await new Promise(resolve => setTimeout(resolve, 10));
+    await assert.rejects(pedirAGemini({}), e => e.codigo === 'cuota');
+    await assert.rejects(primerIntento, e => e.codigo === 'cuota');
+    assert.equal(llamadas, 2, 'no debe emitir un tercer request después del enfriamiento');
+  } finally {
+    reiniciarEnfriamientos();
+    if (esperaPrevia === undefined) delete process.env.ESPERA_REINTENTO_MS;
+    else process.env.ESPERA_REINTENTO_MS = esperaPrevia;
+  }
+});
