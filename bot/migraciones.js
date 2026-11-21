@@ -240,10 +240,15 @@ CREATE TRIGGER IF NOT EXISTS auditoria_borrado_prestamos AFTER DELETE ON prestam
     CREATE INDEX idx_trabajos_orden ON trabajos(usuario,tipo,carril,estado,id);
     CREATE INDEX idx_trabajos_dependencia ON trabajos(dependencia) WHERE esperando=1;
   ` },
+  { version: 10, nombre: 'ahorro general sin objetivo', sql: `
+    ALTER TABLE metas ADD COLUMN ahorro_general INTEGER NOT NULL DEFAULT 0 CHECK (ahorro_general IN (0,1));
+    CREATE UNIQUE INDEX idx_metas_ahorro_general ON metas(usuario)
+      WHERE ahorro_general = 1 AND estado <> 'cancelada';
+  ` },
 ];
 
 const hayDatos = (db) =>
-  ['movimientos', 'presupuestos', 'deudas', 'prestamos'].some((t) => {
+  ['movimientos', 'presupuestos', 'deudas', 'prestamos', 'metas'].some((t) => {
     try { return Boolean(db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get()); } catch { return false; }
   });
 

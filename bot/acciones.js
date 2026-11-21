@@ -4,6 +4,7 @@ import { CATEGORIAS } from './categorias.js';
 import { pesos, rangoMes, rangoPeriodo, valida } from './fechas.js';
 import { montoValido } from './montos.js';
 import { ejecutarFase2 } from './acciones2.js';
+import { ahorroGeneral } from './metas.js';
 import * as contexto from './contexto.js';
 import { TEMAS_GUIA, configurarConsejos, consejoProactivo, guiaFinanciera } from './consejos.js';
 
@@ -230,13 +231,16 @@ function ejecutarAtomico(accion, { usuario, hoy, mensajeId, indice, efectos }) {
 
     case 'ver_presupuestos': {
       const lista = db.presupuestos(usuario);
-      if (lista.length === 0) return 'Aún no tienes presupuestos. Prueba: "presupuesto de 300 mil en comida".';
       const { desde, hasta } = rangoMes(hoy.slice(0, 7));
-      const lineas = ['🎯 Presupuestos de este mes:'];
+      const lineas = [lista.length
+        ? '🎯 Presupuestos de este mes:'
+        : 'Aún no tienes presupuestos. Prueba: "presupuesto de 300 mil en comida".'];
       for (const p of lista) {
         const gastado = db.gastoEnCategoria(usuario, p.categoria, desde, hasta);
         lineas.push(`• ${p.categoria}: ${pesos(gastado)} de ${pesos(p.limite)} (${finanzas.porcentajePresupuesto(gastado, p.limite)}%)`);
       }
+      const ahorro = ahorroGeneral(usuario);
+      if (ahorro) lineas.push('', `💰 Ahorro general: ${pesos(ahorro.ahorrado)} apartados. Ver /metas.`);
       return lineas.join('\n');
     }
 
