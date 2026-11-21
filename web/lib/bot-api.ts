@@ -200,7 +200,7 @@ export async function obtenerPresupuestos(mes = mesActual()): Promise<Resultado<
     }))
 }
 
-export type Saldo = { ingresos: number; gastos: number; balance: number }
+export type Saldo = { ingresos: number; gastos: number; balance: number; ahorroGeneral?: number }
 export type DeudaPersona = {
   persona: string
   saldo: number
@@ -225,7 +225,9 @@ export async function obtenerSaldo(): Promise<Resultado<Saldo>> {
   return consultar('/api/saldo', (dato): dato is Saldo => {
     if (!dato || typeof dato !== 'object') return false
     const valor = dato as Record<string, unknown>
-    return Number.isSafeInteger(valor.ingresos) && Number.isSafeInteger(valor.gastos) && Number.isSafeInteger(valor.balance)
+    return Number.isSafeInteger(valor.ingresos) && Number.isSafeInteger(valor.gastos) && Number.isSafeInteger(valor.balance) &&
+      (valor.ahorroGeneral === undefined || (typeof valor.ahorroGeneral === 'number' &&
+        Number.isSafeInteger(valor.ahorroGeneral) && valor.ahorroGeneral >= 0))
   })
 }
 

@@ -1,12 +1,22 @@
 import { DashboardShell, EstadoConexion, FormatoMonto } from '@/components/dashboard-shell'
-import { obtenerPresupuestos, obtenerSalud } from '@/lib/bot-api'
+import { obtenerPresupuestos, obtenerSaldo, obtenerSalud } from '@/lib/bot-api'
 
 export default async function PresupuestosPage() {
-  const [resultado, salud] = await Promise.all([obtenerPresupuestos(), obtenerSalud()])
+  const [resultado, saldo, salud] = await Promise.all([obtenerPresupuestos(), obtenerSaldo(), obtenerSalud()])
   const consultado = new Date().toISOString()
   return (
     <DashboardShell pagina="Presupuestos" salud={salud} consultado={consultado}>
       <div className="page-heading"><div><p className="eyebrow">CONTROL MENSUAL</p><h1>Presupuestos</h1><p className="subheading">Límites y gastos registrados en el bot.</p></div></div>
+      {saldo.ok && (
+        <section className="panel" aria-labelledby="ahorro-general">
+          <div className="panel-heading">
+            <h2 id="ahorro-general">Ahorro general</h2>
+            {saldo.datos.ahorroGeneral !== undefined && <strong><FormatoMonto valor={saldo.datos.ahorroGeneral} /></strong>}
+          </div>
+          {saldo.datos.ahorroGeneral === undefined && <p className="subheading">Para apartar dinero, escríbele al bot por WhatsApp.</p>}
+        </section>
+      )}
+      {!saldo.ok && resultado.ok && <EstadoConexion motivo={saldo.motivo} seccion="Ahorro general" />}
       {!resultado.ok && <EstadoConexion motivo={resultado.motivo} />}
       {resultado.ok && (resultado.datos.length === 0
         ? <section className="panel"><h2>Aún no tienes presupuestos</h2><p className="subheading">Puedes crear uno escribiendo al bot por WhatsApp.</p></section>
