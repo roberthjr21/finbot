@@ -267,17 +267,38 @@ export function cerrarBase() {
 // Conexión compartida para los módulos de la fase 2 (recordatorios, metas, etc.)
 export const base = () => db;
 
+export function saldoDeMeta(id) {
+  return db.prepare(`
+    SELECT (SELECT COALESCE(SUM(monto), 0) FROM metas_aportes WHERE meta_id = ?)
+         - (SELECT COALESCE(SUM(ahorro_descontado), 0) FROM movimientos WHERE ahorro_meta_id = ?) AS saldo
+  `).get(id, id).saldo;
+}
+
+export function descuentoDeAhorro(usuario, id) {
+  return db.prepare('SELECT ahorro_descontado FROM movimientos WHERE usuario = ? AND id = ?')
+    .get(usuario, id)?.ahorro_descontado ?? 0;
+}
+
+function fondoParaGastos(usuario) {
+  return db.prepare(`
+    SELECT id FROM metas WHERE usuario = ? AND ahorro_general = 1
+      AND descontar_gastos = 1 AND estado = 'activa'
+  `).get(usuario);
+}
+
 // --- Movimientos ---
 // Devuelve el id nuevo, o null si ese mensaje ya estaba registrado
-export function agregarMovimiento({ usuario, tipo, monto, categoria, descripcion, fecha, mensajeId }) {
-  const r = db
-    .prepare(
-      `INSERT INTO movimientos (usuario, tipo, monto, categoria, descripcion, fecha, mensaje_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (mensaje_id) DO NOTHING`
-    )
-    .run(usuario, tipo, monto, categoria, descripcion ?? '', fecha, mensajeId ?? null);
-  return r.changes === 0 ? null : Number(r.lastInsertRowid);
+export function agregarMovimiento({ usuario, tipo, monto, categoria, descripcion, fecha, mensajeId, usarAhorro = true }) {
+  return enTransaccion(() => {
+    const fondo = tipo === 'gasto' && usarAhorro ? fondoParaGastos(usuario) : null;
+    const descuento = fondo ? Math.min(monto, Math.max(0, saldoDeMeta(fondo.id))) : 0;
+    const r = db.prepare(`
+      INSERT INTO movimientos (usuario, tipo, monto, categoria, descripcion, fecha, mensaje_id, ahorro_meta_id, ahorro_descontado)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT (mensaje_id) DO NOTHING
+    `).run(usuario, tipo, monto, categoria, descripcion ?? '', fecha, mensajeId ?? null, fondo?.id ?? null, descuento);
+    return r.changes === 0 ? null : Number(r.lastInsertRowid);
+  });
 }
 
 export function listarMovimientos({ usuario, desde, hasta, tipo, categoria, limite = 100, offset = 0 }) {
@@ -369,6 +390,18 @@ export function editarMovimiento(usuario, id, cambios, origen = 'web') {
     if (!antes || antes.ligado) return null;
     const campos = ['tipo', 'monto', 'categoria', 'descripcion', 'fecha'].filter((c) => cambios[c] !== undefined);
     if (!campos.length) return null;
+    if (cambios.tipo !== undefined || cambios.monto !== undefined) {
+      const ahorro = db.prepare('SELECT ahorro_meta_id, ahorro_descontado FROM movimientos WHERE usuario = ? AND id = ?').get(usuario, id);
+      if (ahorro.ahorro_meta_id !== null) {
+        const anterior = antes.tipo === 'gasto' ? antes.monto : 0;
+        const actual = (cambios.tipo ?? antes.tipo) === 'gasto' ? cambios.monto ?? antes.monto : 0;
+        let descuento = Math.min(ahorro.ahorro_descontado, actual);
+        if (actual > anterior && fondoParaGastos(usuario)?.id === ahorro.ahorro_meta_id) {
+          descuento += Math.min(actual - anterior, Math.max(0, saldoDeMeta(ahorro.ahorro_meta_id)));
+        }
+        db.prepare('UPDATE movimientos SET ahorro_descontado = ? WHERE usuario = ? AND id = ?').run(descuento, usuario, id);
+      }
+    }
     db.prepare(`UPDATE movimientos SET ${campos.map((c) => `${c} = ?`).join(', ')} WHERE usuario = ? AND id = ?`)
       .run(...campos.map((c) => cambios[c]), usuario, id);
     const despues = obtenerMovimiento(usuario, id);

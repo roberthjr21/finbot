@@ -144,6 +144,10 @@ function ejecutarAtomico(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       let texto = `${etiqueta} registrado: ${pesos(monto)} en ${categoria}`;
       if (descripcion) texto += ` (${descripcion})`;
       if (fecha !== hoy) texto += ` · ${fecha}`;
+      const descuento = datos.tipo === 'gasto' ? db.descuentoDeAhorro(usuario, id) : 0;
+      if (descuento > 0) {
+        texto += `\n💰 Desconté ${pesos(descuento)} de tu ahorro general. Te quedan ${pesos(ahorroGeneral(usuario).ahorrado)} ahorrados.`;
+      }
       if (datos.tipo === 'gasto') texto += alertaPresupuesto(usuario, categoria, fecha);
       if (datos.tipo === 'ingreso') texto += consejoProactivo(usuario, hoy, { tipo: 'ingreso', monto });
       return texto;
@@ -256,7 +260,7 @@ function ejecutarAtomico(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       const nombre = previa.persona?.persona ?? persona;
       const movimientoId = db.agregarMovimiento({
         usuario, tipo: 'gasto', monto: datos.monto, categoria: 'Préstamos', descripcion: `Préstamo a ${nombre}`.slice(0, 120),
-        fecha: hoy, mensajeId: `${mensajeId}:${indice}`,
+        fecha: hoy, mensajeId: `${mensajeId}:${indice}`, usarAhorro: false,
       });
       if (movimientoId === null) return null; // ya estaba registrado
       db.agregarPrestamo({
@@ -431,7 +435,7 @@ function ejecutarAtomico(accion, { usuario, hoy, mensajeId, indice, efectos }) {
 
       const movimientoId = db.agregarMovimiento({
         usuario, tipo: 'gasto', monto, categoria: 'Deudas', descripcion: `Abono a ${p.persona}`.slice(0, 120),
-        fecha: hoy, mensajeId: `${mensajeId}:${indice}`,
+        fecha: hoy, mensajeId: `${mensajeId}:${indice}`, usarAhorro: false,
       });
       if (movimientoId === null) return null; // ya estaba registrado
       db.agregarDeuda({

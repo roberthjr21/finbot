@@ -26,7 +26,7 @@ export function crear({ usuario, nombre, objetivo, aporte = null, frecuencia = n
 }
 
 function conProgreso(m) {
-  const ahorrado = Number(db.base().prepare('SELECT COALESCE(SUM(monto), 0) AS s FROM metas_aportes WHERE meta_id = ?').get(m.id).s);
+  const ahorrado = db.saldoDeMeta(m.id);
   const objetivo = m.ahorro_general ? null : m.objetivo;
   const faltante = objetivo === null ? null : Math.max(objetivo - ahorrado, 0);
   return {
@@ -49,6 +49,11 @@ export const listar = (usuario) =>
 export function ahorroGeneral(usuario) {
   const fila = db.base().prepare("SELECT * FROM metas WHERE usuario = ? AND ahorro_general = 1 AND estado <> 'cancelada'").get(usuario);
   return fila ? conProgreso(fila) : null;
+}
+
+export function activarDescuentoDeGastos(usuario, id) {
+  db.base().prepare('UPDATE metas SET descontar_gastos = 1 WHERE usuario = ? AND id = ? AND ahorro_general = 1')
+    .run(usuario, id);
 }
 
 export function aportarAhorroGeneral({ usuario, monto, fecha, mensajeId }) {

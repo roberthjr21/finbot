@@ -153,6 +153,59 @@ test('ahorro rápido: todo el saldo aparta solo la parte que falta', () => {
   assert.equal(db.listarMovimientos({ usuario }).length, 1);
 });
 
+test('apartar todo activa el descuento de gastos, incluidos los recibos confirmados', () => {
+  const usuario = '573002220095';
+  texto('/ingreso 100000 otros saldo inicial', usuario);
+  texto('/meta Viaje 300000', usuario);
+  texto('/aportar Viaje 15000', usuario);
+  const peticion = 'Quiero que coja toda la plata que tengo y la meta en ahorro';
+  const [accion] = interpretarAhorroRapido(peticion).acciones;
+  assert.match(run(usuario, accion.nombre, accion.datos), /Aparté \$100\.000.*Descontaré/);
+  assert.match(texto('/gasto 20000 comida almuerzo', usuario), /Te quedan \$80\.000 ahorrados/);
+  contexto.guardar(usuario, { pendiente: { origen: 'imagen', items: [
+    { tipo: 'gasto', monto: 10000, categoria: 'Comida', descripcion: 'recibo', fecha: HOY },
+  ] } });
+  assert.match(run(usuario, 'confirmar_pendiente'), /Te quedan \$70\.000 ahorrados/);
+  assert.match(texto('/presupuestos', usuario), /Ahorro general: \$70\.000 apartados/);
+  assert.match(texto('/saldo', usuario), /Tienes \$70\.000/);
+  assert.equal(metas.buscar(usuario, 'Viaje').meta.ahorrado, 15000);
+  assert.equal(db.listarMovimientos({ usuario, tipo: 'gasto' }).length, 2);
+});
+
+test('los gastos respetan el ahorro disponible y corregirlos o borrarlos ajusta el descuento', () => {
+  const usuario = '573002220096';
+  texto('/ingreso 50000 otros saldo inicial', usuario);
+  const [fondo] = interpretarAhorroRapido('Aparta todo mi saldo en ahorro').acciones;
+  run(usuario, fondo.nombre, fondo.datos);
+  const datos = { usuario, tipo: 'gasto', categoria: 'Otros', monto: 60000, fecha: HOY, mensajeId: 'gasto-ahorro-ajustes' };
+  const id = db.agregarMovimiento(datos);
+  assert.equal(db.agregarMovimiento(datos), null);
+  assert.equal(db.descuentoDeAhorro(usuario, id), 50000);
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 0);
+  db.editarMovimiento(usuario, id, { monto: 30000 });
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 20000);
+  db.editarMovimiento(usuario, id, { monto: 35000 });
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 15000);
+  db.eliminarMovimiento(usuario, id);
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 50000);
+  assert.equal(metas.ahorroGeneral(V), null);
+});
+
+test('un aporte parcial conserva el ahorro separado hasta activar el descuento', () => {
+  const usuario = '573002220097';
+  texto('/ingreso 60000 otros saldo inicial', usuario);
+  const rapido = (mensaje) => {
+    const [accion] = interpretarAhorroRapido(mensaje).acciones;
+    return run(usuario, accion.nombre, accion.datos);
+  };
+  rapido('Aparta 50000 en ahorro');
+  texto('/gasto 10000 comida almuerzo', usuario);
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 50000);
+  assert.match(rapido('Aparta todo mi saldo en ahorro'), /descontaré tus próximos gastos/);
+  texto('/gasto 10000 comida otro almuerzo', usuario);
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 40000);
+});
+
 test('chat: corregir un gasto dentro de la transacción del mensaje funciona y revierte en bloque', () => {
   const usuario = '573002220090';
   run(usuario, 'registrar_movimiento', { tipo: 'gasto', monto: 20000, categoria: 'Comida', descripcion: 'taxi' });

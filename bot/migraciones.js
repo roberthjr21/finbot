@@ -245,6 +245,14 @@ CREATE TRIGGER IF NOT EXISTS auditoria_borrado_prestamos AFTER DELETE ON prestam
     CREATE UNIQUE INDEX idx_metas_ahorro_general ON metas(usuario)
       WHERE ahorro_general = 1 AND estado <> 'cancelada';
   ` },
+  { version: 11, nombre: 'gastos asociados al ahorro general', sql: `
+    ALTER TABLE metas ADD COLUMN descontar_gastos INTEGER NOT NULL DEFAULT 0
+      CHECK (descontar_gastos IN (0,1));
+    ALTER TABLE movimientos ADD COLUMN ahorro_meta_id INTEGER REFERENCES metas(id);
+    ALTER TABLE movimientos ADD COLUMN ahorro_descontado INTEGER NOT NULL DEFAULT 0
+      CHECK (ahorro_descontado >= 0);
+    CREATE INDEX idx_movimientos_ahorro ON movimientos(ahorro_meta_id) WHERE ahorro_meta_id IS NOT NULL;
+  ` },
 ];
 
 const hayDatos = (db) =>
