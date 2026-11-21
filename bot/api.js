@@ -429,6 +429,11 @@ export function crearServidorApi({ enviar } = {}) {
         // ---------------------------------------------
 
         case '/api/movimientos': {
+          const buscar = parametros.get('buscar')?.trim();
+          if (buscar && buscar.length > 80) {
+            responder(res, 400, { error: 'La búsqueda admite hasta 80 caracteres' }, cabeceras);
+            return;
+          }
           const desde =
             parametros.get('desde') ?? undefined;
 
@@ -531,6 +536,7 @@ export function crearServidorApi({ enviar } = {}) {
             hasta,
             tipo,
             categoria: categoria ?? undefined,
+            buscar,
             limite,
             offset,
           });

@@ -37,6 +37,7 @@ export type MovimientoFiltros = {
   hasta?: string
   tipo?: 'gasto' | 'ingreso'
   categoria?: string
+  buscar?: string
   limite?: number
   offset?: number
 }
@@ -107,7 +108,7 @@ export function nombreMes(mes: string, formato: 'corto' | 'largo' = 'corto') {
   return new Intl.DateTimeFormat('es-CO', { month: formato === 'corto' ? 'short' : 'long', timeZone: 'UTC' }).format(fecha).replace('.', '')
 }
 
-function fechaValida(fecha: string) {
+export function fechaValida(fecha: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return false
   const valor = new Date(`${fecha}T12:00:00Z`)
   return !Number.isNaN(valor.getTime()) && valor.toISOString().slice(0, 10) === fecha
@@ -165,10 +166,11 @@ export async function obtenerResumenes(meses: string[]): Promise<Resultado<Resum
 }
 
 export async function obtenerMovimientos(filtros: MovimientoFiltros = {}): Promise<Resultado<Movimiento[]>> {
-  const { desde, hasta, tipo, categoria, limite = 100, offset = 0 } = filtros
+  const { desde, hasta, tipo, categoria, buscar, limite = 100, offset = 0 } = filtros
   if ((desde !== undefined && !fechaValida(desde)) || (hasta !== undefined && !fechaValida(hasta)) ||
       (desde && hasta && desde > hasta) || (tipo !== undefined && tipo !== 'gasto' && tipo !== 'ingreso') ||
       (categoria !== undefined && (categoria.length === 0 || categoria.length > 100)) ||
+      (buscar !== undefined && buscar.length > 80) ||
       !Number.isSafeInteger(limite) || limite < 1 || limite > 500 ||
       !Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) {
     return { ok: false, motivo: 'conexion' }
@@ -178,6 +180,7 @@ export async function obtenerMovimientos(filtros: MovimientoFiltros = {}): Promi
   if (hasta) parametros.set('hasta', hasta)
   if (tipo) parametros.set('tipo', tipo)
   if (categoria) parametros.set('categoria', categoria)
+  if (buscar) parametros.set('buscar', buscar)
   return consultar(`/api/movimientos?${parametros}`, (dato): dato is Movimiento[] =>
     Array.isArray(dato) && dato.every((fila) => {
       if (!fila || typeof fila !== 'object') return false
