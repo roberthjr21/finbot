@@ -301,13 +301,14 @@ export function agregarMovimiento({ usuario, tipo, monto, categoria, descripcion
   });
 }
 
-export function listarMovimientos({ usuario, desde, hasta, tipo, categoria, limite = 100, offset = 0 }) {
+export function listarMovimientos({ usuario, desde, hasta, tipo, categoria, buscar, limite = 100, offset = 0 }) {
   const condiciones = ['usuario = ?'];
   const params = [usuario];
   if (desde) { condiciones.push('fecha >= ?'); params.push(desde); }
   if (hasta) { condiciones.push('fecha <= ?'); params.push(hasta); }
   if (tipo) { condiciones.push('tipo = ?'); params.push(tipo); }
   if (categoria) { condiciones.push('categoria = ?'); params.push(categoria); }
+  if (buscar) { condiciones.push('instr(lower(descripcion), lower(?)) > 0'); params.push(buscar); }
   params.push(Math.min(Math.max(Number(limite) || 100, 1), 1000));
   return db
     .prepare(

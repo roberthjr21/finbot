@@ -237,6 +237,52 @@ a { color: inherit; }
 .login-form button:disabled { opacity: .6; cursor: default; }
 .login-mensaje { margin: 16px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--muted); }
 
+.resumen-v2-header { align-items: center; flex-wrap: wrap; }
+.resumen-v2-acciones, .finbot-periodo { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.finbot-periodo select, .movimientos-filtros input {
+  min-height: 42px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--panel); color: var(--text); font: inherit; font-size: 14px;
+}
+.finbot-periodo .link-button, .movimientos-filtros .link-button { min-height: 42px; }
+.resumen-v2-metricas, .resumen-v2-actividad { display: grid; gap: 14px; align-items: stretch; }
+.resumen-v2-metricas { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.resumen-v2-actividad { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); align-items: start; }
+.resumen-v2-actividad .transaction-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; }
+.resumen-v2-actividad .transaction-row .category-pill { grid-column: 1; grid-row: 2; }
+.resumen-v2-actividad .transaction-row .muted-cell { display: block; grid-column: 2; grid-row: 2; text-align: right; }
+.resumen-v2-actividad .transaction-row .amount { grid-column: 2; grid-row: 1; }
+.resumen-v2-saldo { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; }
+.resumen-v2-total {
+  gap: 7px; flex-direction: column; justify-content: center; min-height: 134px;
+  padding: 18px 20px; box-shadow: var(--shadow);
+  background: linear-gradient(135deg, #174c3b, #0d3528);
+}
+.resumen-v2-total .hero-amount { font-size: clamp(23px, 3vw, 38px); }
+.resumen-v2-metricas strong { overflow-wrap: anywhere; }
+.resumen-v2-ahorro { background: var(--brand-soft); }
+.resumen-v2-ahorro .stat-top, .resumen-v2-link { color: var(--brand-strong); }
+.resumen-v2-link { font-size: 13px; font-weight: 650; text-underline-offset: 3px; }
+.resumen-v2-periodo { justify-content: center; gap: 10px; }
+.resumen-v2-periodo .stat-top { margin-bottom: 2px; }
+.resumen-v2-periodo strong { font-size: clamp(18px, 2.2vw, 26px); }
+.resumen-cargando { margin: 0; min-height: 128px; display: grid; align-content: center; }
+.movimientos-filtros { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.movimientos-filtros label { display: grid; gap: 4px; color: var(--muted); font-size: 13px; }
+.movimientos-filtros input { width: 100%; }
+.movimientos-filtros .movimientos-buscar { flex: 1 1 190px; }
+@media (max-width: 1100px) {
+  .resumen-v2-metricas { grid-template-columns: 1fr; }
+  .resumen-v2-periodo { display: grid; grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 740px) {
+  .resumen-v2-actividad { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .resumen-v2-saldo { grid-template-columns: 1fr; }
+  .finbot-periodo select, .movimientos-filtros input { font-size: 16px; }
+  .movimientos-filtros label { flex: 1 1 132px; }
+}
+
 /* ===== Tablet ===== */
 @media (max-width: 1000px) {
   .charts-grid { grid-template-columns: 1fr; }
