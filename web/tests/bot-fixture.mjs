@@ -3,6 +3,14 @@ import { createHash } from 'node:crypto'
 const db = await import('../../bot/db.js');
 const { crearServidorApi } = await import('../../bot/api.js');
 for (const tel of ['573000001111', '573000002222']) db.asegurarUsuario(tel);
+if (process.env.FINBOT_AHORRO_PRUEBA === '1') {
+  const { aportarAhorroGeneral, activarDescuentoDeGastos } = await import('../../bot/metas.js');
+  const usuario = '573000001111';
+  const { meta } = aportarAhorroGeneral({ usuario, monto: 80000 });
+  activarDescuentoDeGastos(usuario, meta.id);
+  db.activarPrueba(usuario);
+  db.conBasePrueba(usuario, () => aportarAhorroGeneral({ usuario, monto: 19000 }));
+}
 if (process.env.FINBOT_VISTA_LOCAL === '1') {
   const usuario = db.usuarioPorTelefono('573000001111'); const ahora = Math.floor(Date.now()/1000);
   db.crearSesion({ usuarioId: usuario.id, tokenHash: createHash('sha256').update('t'.repeat(43)).digest('hex'), ahora, expira: ahora+3600 });

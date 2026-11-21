@@ -124,6 +124,7 @@ function metasAlertas(usuario, hoy) {
   const mes = hoy.slice(0, 7);
   const salida = [];
   for (const m of metas.listar(usuario)) {
+    if (m.objetivo === null) continue;
     const hito = [100, 75, 50, 25].find((h) => m.porcentaje >= h);
     if (hito) {
       salida.push({ clave: `meta:${m.id}:${hito}`, tipo: 'metas', texto: hito === 100 ? `🎉 ¡Meta cumplida! ${m.nombre}: ${pesos(m.ahorrado)}.` : `🎯 Tu meta ${m.nombre} va en ${m.porcentaje}% (${pesos(m.ahorrado)} de ${pesos(m.objetivo)}).` });

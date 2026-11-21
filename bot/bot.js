@@ -16,7 +16,7 @@ import pino from 'pino';
 import * as db from './db.js';
 import { fechaBogota } from './fechas.js';
 import { hayIA, interpretar, nombreProveedor, mensajeErrorIA } from './ia.js';
-import { interpretarComando, atajoSinIA, pideGuia, GUIA } from './comandos.js';
+import { interpretarComando, interpretarAhorroRapido, atajoSinIA, pideGuia, GUIA } from './comandos.js';
 import { ejecutar } from './acciones.js';
 import { reservarAnalisis, procesarAnalisis } from './analisis-trabajos.js';
 import { iniciarApi } from './api.js';
@@ -246,9 +246,15 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
       ? interpretarComando(texto)
       : null;
 
-    const seguimiento = !comando && !texto.startsWith('/') && !opciones.origen
-      ? media.continuarRecarga(contexto.obtener(usuario).recarga, texto) : null;
-    if (seguimiento) {
+    const contextoChat = !texto.startsWith('/') && !opciones.origen ? contexto.obtener(usuario) : null;
+    const confirmacion = contextoChat?.pendiente ? contexto.respuestaDeConfirmacion(texto) : null;
+    // Si también hay una recarga en curso, un monto suelto corresponde a esa recarga.
+    const ahorro = contextoChat && !confirmacion
+      ? interpretarAhorroRapido(texto, Boolean(contextoChat.ahorro && !contextoChat.recarga)) : null;
+    const seguimiento = !ahorro && contextoChat ? media.continuarRecarga(contextoChat.recarga, texto) : null;
+    if (ahorro) {
+      acciones = ahorro.acciones;
+    } else if (seguimiento) {
       if (seguimiento.fin) contexto.guardar(usuario,{recarga:null});
       else if (seguimiento.pendiente) contexto.guardar(usuario,{recarga:seguimiento.pendiente});
       if (seguimiento.texto) respuestas.push(seguimiento.texto);
@@ -261,10 +267,10 @@ async function atenderEnBase(sock, jid, msg, usuario, texto, opciones = {}) {
       respuestas.push(
         'No conozco ese comando. Escribe /ayuda para ver los disponibles.'
       );
-    } else if (!opciones.origen && contexto.obtener(usuario).pendiente && contexto.respuestaDeConfirmacion(texto)) {
+    } else if (confirmacion) {
       // "sí" / "no" sobre lo que quedó pendiente (nota de voz o foto de recibo)
-      acciones = [{ nombre: contexto.respuestaDeConfirmacion(texto) === 'si' ? 'confirmar_pendiente' : 'cancelar_pendiente', datos: {} }];
-    } else if (!opciones.origen && contexto.obtener(usuario).ultimo && contexto.interpretarCorreccion(texto)) {
+      acciones = [{ nombre: confirmacion === 'si' ? 'confirmar_pendiente' : 'cancelar_pendiente', datos: {} }];
+    } else if (contextoChat?.ultimo && contexto.interpretarCorreccion(texto)) {
       // "mejor ponlo en transporte": corrige el último movimiento sin gastar IA
       acciones = [{ nombre: 'corregir_ultimo', datos: contexto.interpretarCorreccion(texto) }];
     } else if (pideGuia(texto)) {

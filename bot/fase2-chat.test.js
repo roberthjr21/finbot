@@ -30,11 +30,12 @@ process.env.GEMINI_API_KEY = 'clave-falsa';
 
 const db = await import('./db.js');
 const { ejecutar } = await import('./acciones.js');
-const { interpretarComando } = await import('./comandos.js');
+const { interpretarAhorroRapido, interpretarComando } = await import('./comandos.js');
 const { fechaDeTexto } = await import('./fechas.js');
 const { sinConfirmaciones } = await import('./politicas.js');
 const contexto = await import('./contexto.js');
 const media = await import('./media.js');
+const metas = await import('./metas.js');
 
 after(() => { servidor.close(); servidor.closeAllConnections?.(); db.cerrarBase(); fs.rmSync(temporal, { recursive: true, force: true }); });
 
@@ -98,6 +99,111 @@ test('chat: otra persona no ve ni toca lo de U', () => {
   assert.match(texto('/recurrentes', V), /No tienes movimientos recurrentes/);
   assert.match(run(V, 'completar_recordatorio', { id: 1 }), /No encontré/);
   assert.match(run(V, 'pausar_recurrente', { id: 1 }), /No encontré/);
+});
+
+test('ahorro rápido: un mensaje con monto aparta dinero sin convertirlo en gasto ni en ingreso', () => {
+  const usuario = '573002220092';
+  const [accion] = interpretarAhorroRapido('¡Quiero que metas los $50.000 pesos que tengo en ahorro, por favor!').acciones;
+  const ctx = { usuario, hoy: HOY, mensajeId: 'ahorro-directo', indice: 0 };
+  assert.match(ejecutar(accion, ctx), /Aparté \$50\.000/);
+  assert.equal(ejecutar(accion, ctx), null);
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 50000);
+  assert.equal(metas.ahorroGeneral(usuario).objetivo, null);
+  assert.equal(db.listarMovimientos({ usuario }).length, 0);
+  assert.match(texto('/presupuestos', usuario), /Ahorro general: \$50\.000 apartados/);
+  assert.match(texto('/metas', usuario), /Ahorro general: \$50\.000 apartados/);
+  assert.doesNotMatch(texto('/presupuestos', V), /Ahorro general/);
+  assert.match(texto('/retirarmeta Ahorro general 10000', usuario), /Retiro de \$10\.000/);
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 40000);
+});
+
+test('ahorro rápido: el monto suelto solo completa una solicitud vigente de esa cuenta', () => {
+  const usuario = '573002220093';
+  const ahorro = (mensaje) => {
+    const accion = interpretarAhorroRapido(mensaje, Boolean(contexto.obtener(usuario).ahorro))?.acciones[0];
+    return accion && run(usuario, accion.nombre, accion.datos);
+  };
+  assert.equal(ahorro('50 mil'), undefined);
+  assert.equal(ahorro('¿Cómo puedo ahorrar 50 mil?'), undefined);
+  assert.equal(ahorro('Pon un presupuesto de 50 mil en ahorro'), undefined);
+  assert.match(ahorro('Quiero que metas la plata que tengo en ahorro'), /¿Cuánto quieres apartar\?/);
+  assert.equal(metas.ahorroGeneral(usuario), null);
+  assert.equal(interpretarAhorroRapido('50 mil', Boolean(contexto.obtener(V).ahorro)), null);
+  assert.match(ahorro('20.5'), /monto no es válido/);
+  assert.match(ahorro('1,5 lucas'), /Aparté \$1\.500/);
+  assert.equal(ahorro('50 mil'), undefined);
+  ahorro('La plata que tengo es para ahorrar');
+  assert.match(ahorro('no'), /cancelé/);
+  assert.equal(ahorro('50 mil'), undefined);
+  contexto.guardar(usuario, { ahorro: {} }, Date.now() - 11 * 60_000);
+  assert.equal(ahorro('50 mil'), undefined);
+});
+
+test('ahorro rápido: todo el saldo aparta solo la parte que falta', () => {
+  const usuario = '573002220094';
+  run(usuario, 'registrar_movimiento', { tipo: 'ingreso', monto: 100000, categoria: 'Otros' });
+  const apartar = (mensaje) => {
+    const [accion] = interpretarAhorroRapido(mensaje).acciones;
+    return run(usuario, accion.nombre, accion.datos);
+  };
+  apartar('Guarda 20 mil para ahorrar');
+  assert.match(apartar('Pasa todo mi saldo a ahorro'), /Aparté \$80\.000/);
+  assert.match(apartar('Pasa todo mi saldo en ahorro'), /No tienes saldo registrado adicional/);
+  assert.match(texto('/saldo', usuario), /Tienes \$100\.000/);
+  assert.equal(db.listarMovimientos({ usuario }).length, 1);
+});
+
+test('apartar todo activa el descuento de gastos, incluidos los recibos confirmados', () => {
+  const usuario = '573002220095';
+  texto('/ingreso 100000 otros saldo inicial', usuario);
+  texto('/meta Viaje 300000', usuario);
+  texto('/aportar Viaje 15000', usuario);
+  const peticion = 'Quiero que coja toda la plata que tengo y la meta en ahorro';
+  const [accion] = interpretarAhorroRapido(peticion).acciones;
+  assert.match(run(usuario, accion.nombre, accion.datos), /Aparté \$100\.000.*Descontaré/);
+  assert.match(texto('/gasto 20000 comida almuerzo', usuario), /Te quedan \$80\.000 ahorrados/);
+  contexto.guardar(usuario, { pendiente: { origen: 'imagen', items: [
+    { tipo: 'gasto', monto: 10000, categoria: 'Comida', descripcion: 'recibo', fecha: HOY },
+  ] } });
+  assert.match(run(usuario, 'confirmar_pendiente'), /Te quedan \$70\.000 ahorrados/);
+  assert.match(texto('/presupuestos', usuario), /Ahorro general: \$70\.000 apartados/);
+  assert.match(texto('/saldo', usuario), /Tienes \$70\.000/);
+  assert.equal(metas.buscar(usuario, 'Viaje').meta.ahorrado, 15000);
+  assert.equal(db.listarMovimientos({ usuario, tipo: 'gasto' }).length, 2);
+});
+
+test('los gastos respetan el ahorro disponible y corregirlos o borrarlos ajusta el descuento', () => {
+  const usuario = '573002220096';
+  texto('/ingreso 50000 otros saldo inicial', usuario);
+  const [fondo] = interpretarAhorroRapido('Aparta todo mi saldo en ahorro').acciones;
+  run(usuario, fondo.nombre, fondo.datos);
+  const datos = { usuario, tipo: 'gasto', categoria: 'Otros', monto: 60000, fecha: HOY, mensajeId: 'gasto-ahorro-ajustes' };
+  const id = db.agregarMovimiento(datos);
+  assert.equal(db.agregarMovimiento(datos), null);
+  assert.equal(db.descuentoDeAhorro(usuario, id), 50000);
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 0);
+  db.editarMovimiento(usuario, id, { monto: 30000 });
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 20000);
+  db.editarMovimiento(usuario, id, { monto: 35000 });
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 15000);
+  db.eliminarMovimiento(usuario, id);
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 50000);
+  assert.equal(metas.ahorroGeneral(V), null);
+});
+
+test('un aporte parcial conserva el ahorro separado hasta activar el descuento', () => {
+  const usuario = '573002220097';
+  texto('/ingreso 60000 otros saldo inicial', usuario);
+  const rapido = (mensaje) => {
+    const [accion] = interpretarAhorroRapido(mensaje).acciones;
+    return run(usuario, accion.nombre, accion.datos);
+  };
+  rapido('Aparta 50000 en ahorro');
+  texto('/gasto 10000 comida almuerzo', usuario);
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 50000);
+  assert.match(rapido('Aparta todo mi saldo en ahorro'), /descontaré tus próximos gastos/);
+  texto('/gasto 10000 comida otro almuerzo', usuario);
+  assert.equal(metas.ahorroGeneral(usuario).ahorrado, 40000);
 });
 
 test('chat: corregir un gasto dentro de la transacción del mensaje funciona y revierte en bloque', () => {
@@ -180,6 +286,7 @@ test('confirmaciones: la misma imagen no se registra dos veces', () => {
 test('políticas: la IA no puede confirmar, corregir ni borrar por su cuenta', () => {
   const filtradas = sinConfirmaciones([
     { nombre: 'confirmar_pendiente' }, { nombre: 'corregir_ultimo' }, { nombre: 'eliminar_recurrente' }, { nombre: 'cancelar_meta' },
+    { nombre: 'apartar_ahorro' },
     { nombre: 'crear_recordatorio' }, { nombre: 'registrar_movimiento' },
   ]);
   assert.deepEqual(filtradas.map((a) => a.nombre), ['crear_recordatorio', 'registrar_movimiento']);

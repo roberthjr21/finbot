@@ -26,12 +26,13 @@ export function crear({ usuario, nombre, objetivo, aporte = null, frecuencia = n
 }
 
 function conProgreso(m) {
-  const ahorrado = Number(db.base().prepare('SELECT COALESCE(SUM(monto), 0) AS s FROM metas_aportes WHERE meta_id = ?').get(m.id).s);
-  const faltante = Math.max(m.objetivo - ahorrado, 0);
+  const ahorrado = db.saldoDeMeta(m.id);
+  const objetivo = m.ahorro_general ? null : m.objetivo;
+  const faltante = objetivo === null ? null : Math.max(objetivo - ahorrado, 0);
   return {
-    id: m.id, nombre: m.nombre, objetivo: m.objetivo, aporte: m.aporte, frecuencia: m.frecuencia,
+    id: m.id, nombre: m.nombre, objetivo, aporte: m.aporte, frecuencia: m.frecuencia,
     fechaLimite: m.fecha_limite, estado: m.estado, creado: m.creado,
-    ahorrado, faltante, porcentaje: Math.min(Math.floor((ahorrado / m.objetivo) * 100), 100),
+    ahorrado, faltante, porcentaje: objetivo === null ? null : Math.min(Math.floor((ahorrado / objetivo) * 100), 100),
     // Cuántos aportes periódicos faltan para completarla, si hay un aporte planeado
     aportesRestantes: m.aporte ? Math.ceil(faltante / m.aporte) : null,
   };
@@ -45,6 +46,32 @@ export const obtener = (usuario, id) => {
 export const listar = (usuario) =>
   db.base().prepare("SELECT * FROM metas WHERE usuario = ? AND estado <> 'cancelada' ORDER BY estado, id").all(usuario).map(conProgreso);
 
+export function ahorroGeneral(usuario) {
+  const fila = db.base().prepare("SELECT * FROM metas WHERE usuario = ? AND ahorro_general = 1 AND estado <> 'cancelada'").get(usuario);
+  return fila ? conProgreso(fila) : null;
+}
+
+export function activarDescuentoDeGastos(usuario, id) {
+  db.base().prepare('UPDATE metas SET descontar_gastos = 1 WHERE usuario = ? AND id = ? AND ahorro_general = 1')
+    .run(usuario, id);
+}
+
+export function aportarAhorroGeneral({ usuario, monto, fecha, mensajeId }) {
+  if (!montoValido(monto)) return { ok: false, error: 'El monto no es válido.' };
+  return db.enTransaccion(() => {
+    let id = ahorroGeneral(usuario)?.id;
+    if (!id) {
+      if (mensajeId && db.base().prepare('SELECT 1 FROM metas_aportes WHERE mensaje_id = ?').get(mensajeId)) {
+        return { ok: true, duplicado: true };
+      }
+      // El esquema histórico exige un objetivo positivo. ahorro_general indica que no se usa.
+      const resultado = db.base().prepare("INSERT INTO metas (usuario, nombre, objetivo, ahorro_general) VALUES (?, 'Ahorro general', 1, 1)").run(usuario);
+      id = Number(resultado.lastInsertRowid);
+    }
+    return aportar({ usuario, id, monto, fecha, mensajeId });
+  });
+}
+
 // Busca por número ("3", "#3") o por parte del nombre. Si dos coinciden, pide precisar.
 export function buscar(usuario, texto) {
   const t = String(texto ?? '').trim();
@@ -55,6 +82,9 @@ export function buscar(usuario, texto) {
   if (!clave) return {};
   const exacta = todas.filter((m) => normalizar(m.nombre) === clave);
   if (exacta.length === 1) return { meta: exacta[0] };
+  const metasConObjetivo = exacta.filter((m) => m.objetivo !== null);
+  // Conserva el acceso por nombre a una meta preexistente llamada "Ahorro general".
+  if (metasConObjetivo.length === 1) return { meta: metasConObjetivo[0] };
   const parecidas = todas.filter((m) => normalizar(m.nombre).includes(clave));
   if (parecidas.length === 1) return { meta: parecidas[0] };
   return parecidas.length > 1 ? { ambigua: parecidas.map((m) => m.nombre) } : {};
@@ -72,7 +102,7 @@ export function mover({ usuario, id, monto, signo, fecha = fechaBogota(), mensaj
     .run(id, usuario, signo * monto, fecha, mensajeId);
   if (r.changes === 0) return { ok: true, duplicado: true, meta: antes };
   const despues = conProgreso(db.base().prepare('SELECT * FROM metas WHERE id = ?').get(id));
-  const estado = despues.ahorrado >= despues.objetivo ? 'cumplida' : 'activa';
+  const estado = despues.objetivo !== null && despues.ahorrado >= despues.objetivo ? 'cumplida' : 'activa';
   if (estado !== despues.estado) db.base().prepare('UPDATE metas SET estado = ? WHERE id = ?').run(estado, id);
   return { ok: true, meta: { ...despues, estado }, cumplida: estado === 'cumplida' && antes.estado !== 'cumplida' };
 }
@@ -86,6 +116,7 @@ export const cancelar = (usuario, id) =>
 export function editar(usuario, id, { nombre, objetivo, aporte, frecuencia, fechaLimite }, { hoy = fechaBogota() } = {}) {
   const m = obtener(usuario, id);
   if (!m) return { ok: false, error: 'No encontré esa meta.' };
+  if (m.objetivo === null) return { ok: false, error: 'El ahorro general se ajusta con aportes y retiros.' };
   const nuevo = {
     nombre: nombre === undefined ? m.nombre : nombreLimpio(nombre),
     objetivo: objetivo ?? m.objetivo,
@@ -108,6 +139,7 @@ export function editar(usuario, id, { nombre, objetivo, aporte, frecuencia, fech
 const barra = (p) => `${'█'.repeat(Math.round(p / 10))}${'░'.repeat(10 - Math.round(p / 10))}`;
 
 export function textoMeta(m) {
+  if (m.objetivo === null) return `#${m.id} ${m.nombre}: ${pesos(m.ahorrado)} apartados`;
   const plan = m.aporte ? ` · plan ${pesos(m.aporte)} ${m.frecuencia}` : '';
   const limite = m.fechaLimite ? ` · para el ${m.fechaLimite}` : '';
   const fin = m.estado === 'cumplida' ? ' ✅ cumplida' : '';

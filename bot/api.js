@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 
 import * as db from './db.js';
 import * as finanzas from './finanzas.js';
+import { ahorroGeneral } from './metas.js';
 import { CATEGORIAS } from './categorias.js';
 import { fechaBogota, rangoMes, valida } from './fechas.js';
 import * as acceso from './acceso.js';
@@ -321,7 +322,8 @@ export function crearServidorApi({ enviar } = {}) {
 
         case '/api/saldo': {
           const total = finanzas.caja(usuario, fechaBogota());
-          responder(res, 200, { ingresos: total.ingresos, gastos: total.gastos, balance: total.balance }, cabeceras);
+          const ahorro = ahorroGeneral(usuario);
+          responder(res, 200, ahorro ? { ...total, ahorroGeneral: ahorro.ahorrado } : total, cabeceras);
           return;
         }
 

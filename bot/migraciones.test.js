@@ -42,6 +42,35 @@ test('migrar es repetible: la segunda vez no hace nada ni toca los datos', () =>
   }
 });
 
+test('el ahorro general y sus descuentos se añaden conservando las metas y los aportes de v9', () => {
+  const archivo = path.join(temporal, 'ahorro-v9.db');
+  crearRespaldo(process.env.DB_ARCHIVO, archivo);
+  const anterior = new DatabaseSync(archivo);
+  try {
+    anterior.exec(`
+      DROP INDEX idx_movimientos_ahorro;
+      ALTER TABLE movimientos DROP COLUMN ahorro_descontado;
+      ALTER TABLE movimientos DROP COLUMN ahorro_meta_id;
+      ALTER TABLE metas DROP COLUMN descontar_gastos;
+      DROP INDEX idx_metas_ahorro_general;
+      ALTER TABLE metas DROP COLUMN ahorro_general;
+      DELETE FROM schema_migraciones WHERE version >= 10;
+    `);
+    const { lastInsertRowid } = anterior.prepare('INSERT INTO metas (usuario, nombre, objetivo) VALUES (?, ?, ?)').run(U, 'Viaje', 500000);
+    anterior.prepare('INSERT INTO metas_aportes (meta_id, usuario, monto, fecha) VALUES (?, ?, ?, ?)').run(lastInsertRowid, U, 75000, '2026-11-01');
+    assert.deepEqual(migrar(anterior, archivo), [10, 11]);
+    const meta = anterior.prepare('SELECT objetivo, ahorro_general, descontar_gastos FROM metas WHERE id = ?').get(lastInsertRowid);
+    assert.equal(meta.objetivo, 500000);
+    assert.equal(meta.ahorro_general, 0);
+    assert.equal(meta.descontar_gastos, 0);
+    assert.equal(anterior.prepare('SELECT ahorro_descontado FROM movimientos LIMIT 1').get().ahorro_descontado, 0);
+    assert.equal(anterior.prepare('SELECT monto FROM metas_aportes WHERE meta_id = ?').get(lastInsertRowid).monto, 75000);
+    assert.deepEqual(anterior.prepare('PRAGMA foreign_key_check').all(), []);
+  } finally {
+    anterior.close();
+  }
+});
+
 test('una migración nueva con datos existentes crea antes una copia verificada y conserva todo', () => {
   const archivo = path.join(temporal, 'vieja.db');
   crearRespaldo(process.env.DB_ARCHIVO, archivo); // base ya migrada hasta v2, con un movimiento

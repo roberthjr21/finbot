@@ -50,13 +50,14 @@ export default async function Page() {
       {!presupuestos.ok && <EstadoConexion motivo={presupuestos.motivo} seccion="Presupuestos" />}
 
       {saldo.ok && (
-        <section className="hero-card" aria-label="Saldo disponible">
+        <section className="hero-card" aria-label="Saldo registrado">
           <div className="hero-main">
-            <span className="hero-label"><Wallet size={15} /> Saldo disponible</span>
+            <span className="hero-label"><Wallet size={15} /> Saldo registrado</span>
             <strong className="hero-amount"><FormatoMonto valor={saldo.datos.balance} /></strong>
             <span className="hero-note">Todo lo que has registrado, desde que empezaste.</span>
           </div>
           <div className="hero-side">
+            {saldo.datos.ahorroGeneral !== undefined && <div><span>Ahorro general</span><strong><FormatoMonto valor={saldo.datos.ahorroGeneral} /></strong></div>}
             {prestamos.ok && <div><span>Te deben</span><strong><FormatoMonto valor={prestamos.datos.total} /></strong></div>}
             {deudas.ok && <div><span>Debes</span><strong><FormatoMonto valor={deudas.datos.total} /></strong></div>}
             {resumen.ok && <div><span>Balance del mes</span><strong><FormatoMonto valor={resumen.datos.balance} /></strong></div>}

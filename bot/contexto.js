@@ -11,7 +11,7 @@ import { entero } from './limites.js';
 
 const ttlMs = () => entero('CONTEXTO_MINUTOS', 30) * 60_000;
 const ttlConfirmacionMs = () => entero('CONFIRMACION_MINUTOS', 10) * 60_000;
-const CAMPOS_BREVES = ['pendiente', 'recarga'];
+const CAMPOS_BREVES = ['pendiente', 'recarga', 'ahorro'];
 
 function obtenerInterno(usuario, ahora = Date.now()) {
   const fila = db.base().prepare('SELECT datos, actualizado FROM contexto WHERE usuario = ?').get(usuario);

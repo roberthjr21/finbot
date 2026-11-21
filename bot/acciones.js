@@ -4,6 +4,7 @@ import { CATEGORIAS } from './categorias.js';
 import { pesos, rangoMes, rangoPeriodo, valida } from './fechas.js';
 import { montoValido } from './montos.js';
 import { ejecutarFase2 } from './acciones2.js';
+import { ahorroGeneral } from './metas.js';
 import * as contexto from './contexto.js';
 import { TEMAS_GUIA, configurarConsejos, consejoProactivo, guiaFinanciera } from './consejos.js';
 
@@ -143,6 +144,10 @@ function ejecutarAtomico(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       let texto = `${etiqueta} registrado: ${pesos(monto)} en ${categoria}`;
       if (descripcion) texto += ` (${descripcion})`;
       if (fecha !== hoy) texto += ` · ${fecha}`;
+      const descuento = datos.tipo === 'gasto' ? db.descuentoDeAhorro(usuario, id) : 0;
+      if (descuento > 0) {
+        texto += `\n💰 Desconté ${pesos(descuento)} de tu ahorro general. Te quedan ${pesos(ahorroGeneral(usuario).ahorrado)} ahorrados.`;
+      }
       if (datos.tipo === 'gasto') texto += alertaPresupuesto(usuario, categoria, fecha);
       if (datos.tipo === 'ingreso') texto += consejoProactivo(usuario, hoy, { tipo: 'ingreso', monto });
       return texto;
@@ -230,13 +235,16 @@ function ejecutarAtomico(accion, { usuario, hoy, mensajeId, indice, efectos }) {
 
     case 'ver_presupuestos': {
       const lista = db.presupuestos(usuario);
-      if (lista.length === 0) return 'Aún no tienes presupuestos. Prueba: "presupuesto de 300 mil en comida".';
       const { desde, hasta } = rangoMes(hoy.slice(0, 7));
-      const lineas = ['🎯 Presupuestos de este mes:'];
+      const lineas = [lista.length
+        ? '🎯 Presupuestos de este mes:'
+        : 'Aún no tienes presupuestos. Prueba: "presupuesto de 300 mil en comida".'];
       for (const p of lista) {
         const gastado = db.gastoEnCategoria(usuario, p.categoria, desde, hasta);
         lineas.push(`• ${p.categoria}: ${pesos(gastado)} de ${pesos(p.limite)} (${finanzas.porcentajePresupuesto(gastado, p.limite)}%)`);
       }
+      const ahorro = ahorroGeneral(usuario);
+      if (ahorro) lineas.push('', `💰 Ahorro general: ${pesos(ahorro.ahorrado)} apartados. Ver /metas.`);
       return lineas.join('\n');
     }
 
@@ -252,7 +260,7 @@ function ejecutarAtomico(accion, { usuario, hoy, mensajeId, indice, efectos }) {
       const nombre = previa.persona?.persona ?? persona;
       const movimientoId = db.agregarMovimiento({
         usuario, tipo: 'gasto', monto: datos.monto, categoria: 'Préstamos', descripcion: `Préstamo a ${nombre}`.slice(0, 120),
-        fecha: hoy, mensajeId: `${mensajeId}:${indice}`,
+        fecha: hoy, mensajeId: `${mensajeId}:${indice}`, usarAhorro: false,
       });
       if (movimientoId === null) return null; // ya estaba registrado
       db.agregarPrestamo({
@@ -427,7 +435,7 @@ function ejecutarAtomico(accion, { usuario, hoy, mensajeId, indice, efectos }) {
 
       const movimientoId = db.agregarMovimiento({
         usuario, tipo: 'gasto', monto, categoria: 'Deudas', descripcion: `Abono a ${p.persona}`.slice(0, 120),
-        fecha: hoy, mensajeId: `${mensajeId}:${indice}`,
+        fecha: hoy, mensajeId: `${mensajeId}:${indice}`, usarAhorro: false,
       });
       if (movimientoId === null) return null; // ya estaba registrado
       db.agregarDeuda({

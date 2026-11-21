@@ -58,6 +58,7 @@ export const AYUDA = [
   '• "ponme un presupuesto de 300 mil en comida"',
   '• "cómo van mis gastos" o "en qué estoy fallando"',
   '• "cuánta plata tengo" o "cuánto me queda"',
+  '• "aparta todo mi saldo en ahorro" para descontar de ahí tus próximos gastos · /presupuestos para ver lo apartado',
   '• "le debo 50 mil a Juan" · "voy a abonar 20 mil a Juan" · "cuánto le debo a Juan"',
   '',
   'O usa comandos (funcionan aunque la IA falle):',
@@ -278,6 +279,28 @@ export function pideGuia(texto) {
   if (!t || t.length > 50) return false;
   return /^(hola )?(una |la |mi )?(guia|tutorial|instrucciones|ejemplos)( de uso| rapida| paso a paso)?$/.test(t) ||
     /^(como (funcionas|funciona|te uso|se usa|empiezo|empezar|uso el bot|uso esto)( esto| el bot)?|que (puedes|sabes|haces) hacer|que haces|para que sirves|ayuda|ayudame|empezar|no se que hacer|como te hablo)$/.test(t);
+}
+
+// Conserva los puntos de miles y las comas decimales para parseMonto.
+export function interpretarAhorroRapido(texto, esperandoMonto = false) {
+  const t = normalizar(texto).replace(/^[¿¡]+|[.!?]+$/g, '').replace(/\s+/g, ' ').trim();
+  if (!t || t.length > 160) return null;
+  const accion = (datos = {}) => ({ acciones: [{ nombre: 'apartar_ahorro', datos }] });
+  const pedido = t.replace(/^(?:por favor,? )?(?:quiero (?:que )?)?(?:me )?/, '').replace(/,? por favor$/, '');
+  const solicitud = pedido.match(/^(?:met(?:e|a|as|er|eme)|coj(?:a|as)|cog(?:e|er)|apart(?:a|es|ar|ame)|guard(?:a|es|ar|ame)|pas(?:a|es|ar|ame)|pon(?:gas|er|me)?|separ(?:a|es|ar)) (.+?)(?: y (?:la|lo) (?:met[ae]s?|guard[ae]s?|apart[ae]s?))? (?:(?:en|a|al) (?:mi |mis |el )?ahorros?|para ahorrar)$/);
+  if (solicitud) {
+    const cantidad = solicitud[1].replace(/^(?:los |las )/, '').replace(/ (?:que tengo|de mi saldo)$/, '').replace(/ pesos$/, '');
+    if (/^(?:todo (?:mi|el) saldo|todo lo que tengo(?: en finbot)?|toda (?:la|mi) plata(?: que tengo)?|todo (?:el|mi) dinero(?: que tengo)?)$/.test(cantidad)) return accion({ todo: true });
+    if (/^(?:la|mi) (?:plata|dinero)(?: que tengo)?$/.test(cantidad)) return accion();
+    if (/^[+$\d-]/.test(cantidad)) return accion({ monto: parseMonto(cantidad) });
+  }
+  if (/^(?:la|mi) (?:plata|dinero) que tengo (?:es|va) para ahorrar$/.test(t) ||
+      /^quiero ahorrar (?:la|mi) (?:plata|dinero) que tengo$/.test(t)) return accion();
+  if (!esperandoMonto) return null;
+  if (/^(?:no|cancela|cancelar|olvidalo)$/.test(t)) return accion({ seguimiento: true, cancelar: true });
+  const cantidad = t.replace(/^(?:aparta|guarda|mete) /, '').replace(/ pesos$/, '');
+  if (!/^[+$\d-][\d$.,+-]*(?:\s*(?:mil|lucas|k|millones?|millon))?$/.test(cantidad)) return null;
+  return accion({ seguimiento: true, monto: parseMonto(cantidad) });
 }
 
 export function atajoSinIA(texto) {

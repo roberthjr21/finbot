@@ -2,6 +2,7 @@ import * as db from './db.js';
 import * as recordatorios from './recordatorios.js';
 import * as recurrentes from './recurrentes.js';
 import * as metas from './metas.js';
+import * as finanzas from './finanzas.js';
 import * as alertas from './alertas.js';
 import * as contexto from './contexto.js';
 import { textoDiagnostico } from './diagnostico.js';
@@ -112,6 +113,35 @@ export function ejecutarFase2(accion, ctx, ejecutarBase) {
     }
 
     // ---- Metas de ahorro ----
+    case 'apartar_ahorro': {
+      const chat = contexto.obtener(usuario);
+      if (datos.seguimiento && !chat.ahorro) return 'La solicitud venció. Dime «aparta 50 mil en ahorro» con tu monto.';
+      if (datos.cancelar) {
+        contexto.guardar(usuario, { ahorro: null });
+        return 'Listo, cancelé la solicitud de ahorro.';
+      }
+      if (!datos.todo && datos.monto === undefined) {
+        contexto.guardar(usuario, { ahorro: {} });
+        return chat.recarga
+          ? '¿Cuánto quieres apartar? Escríbeme «aparta 50 mil en ahorro» con tu monto.'
+          : '¿Cuánto quieres apartar? Respóndeme con el monto, por ejemplo «50 mil».';
+      }
+      const fondo = datos.todo ? metas.ahorroGeneral(usuario) : null;
+      const monto = datos.todo ? finanzas.caja(usuario, hoy).balance - (fondo?.ahorrado ?? 0) : datos.monto;
+      if (datos.todo && monto <= 0) {
+        if (!fondo) return 'No tienes saldo registrado adicional para apartar. Si ya tienes plata guardada, dime el monto.';
+        metas.activarDescuentoDeGastos(usuario, fondo.id);
+        if (chat.ahorro) contexto.guardar(usuario, { ahorro: null });
+        return `No tienes saldo registrado adicional para apartar. Tienes ${pesos(fondo.ahorrado)} en Ahorro general y de ahí descontaré tus próximos gastos.`;
+      }
+      const resultado = metas.aportarAhorroGeneral({ usuario, monto, fecha: hoy, mensajeId: clave });
+      if (!resultado.ok) return `${aviso(resultado)} Usa un monto como «50 mil» o «50.000».`;
+      if (resultado.duplicado) return null;
+      if (chat.ahorro) contexto.guardar(usuario, { ahorro: null });
+      if (datos.todo) metas.activarDescuentoDeGastos(usuario, resultado.meta.id);
+      const descuento = datos.todo ? ' Descontaré de ahí los próximos gastos que registres.' : '';
+      return `💰 Aparté ${pesos(monto)} en tu ahorro general. Ya tienes ${pesos(resultado.meta.ahorrado)} apartados.${descuento} Puedes verlo en /presupuestos o /metas.`;
+    }
     case 'crear_meta': {
       const limite = datos.fecha_limite !== undefined || datos.fecha_limite_texto !== undefined ? resolverFecha(datos, hoy, 'fecha_limite', 'fecha_limite_texto') : null;
       if ((datos.fecha_limite !== undefined || datos.fecha_limite_texto !== undefined) && !limite) return '⚠️ No entendí la fecha límite de la meta.';
