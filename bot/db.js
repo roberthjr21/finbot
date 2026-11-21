@@ -31,6 +31,14 @@ const db = new Proxy(dbReal, {
 const pruebas = new Map();
 const sesionesPrueba = new Map();
 const modoEntrada = new AsyncLocalStorage();
+
+// Un trabajador puede despertarse desde el procesamiento de otro mensaje.
+// Comienza en la base persistente y comprueba su propia reserva al reclamarlo.
+export function sinContextoDeMensaje(tarea) {
+  return modoEntrada.run(undefined, () =>
+    baseTemporal.run(undefined, () => controlTransaccion.run(undefined, tarea)));
+}
+
 export const sesionPrueba = usuario => sesionesPrueba.get(usuario);
 export const modoCapturado = () => modoEntrada.getStore();
 export function conModoCapturado(usuario, metadatos, tarea) {

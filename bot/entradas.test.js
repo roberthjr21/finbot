@@ -10,6 +10,9 @@ process.env.DB_ARCHIVO=path.join(temporal,'fixture.db');
 process.env.COLA_SECRETO='solo-pruebas-modo-capturado-no-es-real-12345';
 const db=await import('./db.js'),q=await import('./trabajos.js'),e=await import('./entradas.js'),ctx=await import('./contexto.js');
 const { ejecutar }=await import('./acciones.js');
+const { interpretarAhorroRapido, interpretarComando } = await import('./comandos.js');
+const { ahorroGeneral } = await import('./metas.js');
+const outbox = await import('./outbox.js');
 const exec=promisify(execFile);
 after(()=>{db.cerrarBase();fs.rmSync(temporal,{recursive:true,force:true});});
 const A='573001001001',B='573001001002';db.asegurarUsuario(A);db.asegurarUsuario(B);
@@ -31,6 +34,50 @@ test('captura on/gasto/off/real al admitir y respeta FIFO',async()=>{
   assert.deepEqual(filas.map(t=>t.modo_operacion),['prueba','prueba','real','real']);assert.equal(filas[0].sesion_prueba,filas[1].sesion_prueba);
   const antes=movimientos(A).length;await paso();await paso(gasto);assert.equal(movimientos(A).length,antes);
   db.conBasePrueba(A,()=>assert.equal(movimientos(A).length,1));await paso();await paso(gasto);assert.equal(movimientos(A).length,antes+1);
+});
+
+test('el trabajador envía ahorro y ayuda al despertarlo desde una entrada de prueba', async () => {
+  limpiar();
+  const enviados = [];
+  const procesarSalida = (tarea) => outbox.entregar(tarea, async (usuario, texto) => {
+    enviados.push({ usuario, texto });
+  });
+  const trabajador = q.crearTrabajador({ tipo: 'salida', procesar: procesarSalida, intervaloMs: 60_000 });
+  const jid = `${A}@s.whatsapp.net`;
+  try {
+    admitir('/prueba on');
+    await paso();
+    await outbox.despachar({ enviar: async () => {} });
+
+    const peticion = 'Aparta 50 mil en ahorro';
+    admitir(peticion);
+    await paso((tarea) => {
+      db.enTransaccion(() => {
+        const [accion] = interpretarAhorroRapido(peticion).acciones;
+        const texto = ejecutar(accion, { usuario: A, hoy: '2026-11-14', mensajeId: tarea.clave, indice: 0 });
+        outbox.encolar({ clave: `respuesta:${tarea.clave}`, usuario: A, jid, texto });
+      });
+      trabajador.despertar();
+    });
+    await new Promise((resolver) => setImmediate(resolver));
+
+    admitir('/ayuda');
+    await paso((tarea) => {
+      db.enTransaccion(() => {
+        outbox.encolar({ clave: `respuesta:${tarea.clave}`, usuario: A, jid, texto: interpretarComando('/ayuda').respuesta });
+      });
+      trabajador.despertar();
+    });
+
+    await trabajador.detener();
+    assert.deepEqual(enviados.map(({ usuario }) => usuario), [A, A]);
+    assert.match(enviados[0].texto, /Aparté \$50\.000/);
+    assert.match(enviados[1].texto, /ayudante financiero/i);
+    assert.equal(db.conBasePrueba(A, () => ahorroGeneral(A).ahorrado), 50000);
+    assert.equal(ahorroGeneral(A), null);
+  } finally {
+    await trabajador.detener();
+  }
 });
 test('reinicio antes de procesar gasto en prueba cancela sin volver al modo real',async()=>{
   limpiar();admitir('/prueba on');await paso();admitir('/gasto 2500 comida');const antes=JSON.stringify(movimientos(A));

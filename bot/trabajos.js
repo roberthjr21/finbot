@@ -144,6 +144,9 @@ export function crearTrabajador({ tipo, procesar, concurrencia = 4, habilitado =
   const activos = new Set();
   let detenido = false;
   function despertar() {
+    return db.sinContextoDeMensaje(procesarPendientes);
+  }
+  function procesarPendientes() {
     if (detenido) return;
     try { purgarVencidos(); reconciliarReservas(); retenerTerminales(); mantenimiento(); } catch { registro.error('No se pudo mantener la cola'); }
     if (!habilitado()) return;
